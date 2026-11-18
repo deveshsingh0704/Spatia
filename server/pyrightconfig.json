@@ -1,0 +1,11 @@
+{
+  "include": [
+    "."
+  ],
+  "extraPaths": [
+    ".",
+    "src"
+  ],
+  "venvPath": ".",
+  "venv": ".venv_gpu"
+}

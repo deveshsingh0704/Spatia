@@ -1,0 +1,32 @@
+[project]
+name = "latentcraft-server"
+version = "0.1.0"
+description = "LatentCraft diffusion benchmark and generative mockup backend"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "python-multipart>=0.0.9",
+    "pillow>=10.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "diffusers>=0.30.0",
+    "transformers>=4.40.0",
+    "accelerate>=0.30.0",
+    "safetensors>=0.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "samplers"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

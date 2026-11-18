@@ -1,0 +1,94 @@
+# ==========================================
+# LatentCraft Root .gitignore
+# ==========================================
+
+# --- User & Private Documentation in Base Directory ---
+/*.md
+!/README.md
+
+# --- Python Environment & Virtual Environments ---
+.venv/
+.venv_gpu/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Datasets & Raw Images (Heavy Files) ---
+**/dataset/
+**/lsun_bedroom_2k/
+**/data/
+*.png
+*.jpg
+*.jpeg
+
+# --- Training Outputs, Model Weights & Checkpoints ---
+**/outputs/sd15_bedroom_lora/
+**/outputs/experiments/
+**/outputs/generated/
+**/model_export/*.safetensors
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+
+# --- Node / Next.js (Client) ---
+node_modules/
+client/node_modules/
+.next/
+client/.next/
+out/
+client/out/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# --- Databases & Local Storage ---
+*.sqlite
+*.sqlite3
+*.db
+**/latentcraft.db
+
+# --- Analysis & Internal Tools ---
+graphify-out/
+.graphify*
+
+# --- IDE & Environment Variables ---
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+

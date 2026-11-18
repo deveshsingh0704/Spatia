@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+:root {
+  --background: #070b14;
+  --foreground: #f1f5f9;
+  --card-bg: #0f1728;
+  --border-color: #1e293b;
+}
+
+/* Functional Light Mode Overrides */
+html.light,
+html.light body {
+  --background: #f8fafc !important;
+  --foreground: #0f172a !important;
+  --card-bg: #ffffff !important;
+  --border-color: #e2e8f0 !important;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+html.light header {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+html.light header span.text-white,
+html.light h1.text-white,
+html.light h2.text-white,
+html.light h3.text-white,
+html.light h4.text-white {
+  color: #0f172a !important;
+}
+
+html.light .bg-\[\#070b14\] {
+  background-color: #f8fafc !important;
+}
+
+html.light .bg-\[\#0d121d\],
+html.light .bg-\[\#0d1424\],
+html.light .bg-\[\#0b1220\],
+html.light .bg-\[\#0f1728\],
+html.light .bg-\[\#0f172a\],
+html.light .bg-\[\#0f1728\]\/95 {
+  background-color: #ffffff !important;
+}
+
+html.light .bg-\[\#131b2c\],
+html.light .bg-\[\#131b2e\],
+html.light .bg-\[\#131c2e\],
+html.light .bg-\[\#121929\] {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .border-\[\#1f293d\],
+html.light .border-\[\#1e293b\],
+html.light .border-\[\#23324d\],
+html.light .border-\[\#22324f\],
+html.light .border-\[\#1e2a42\] {
+  border-color: #e2e8f0 !important;
+}
+
+html.light .text-slate-100,
+html.light .text-slate-200 {
+  color: #1e293b !important;
+}
+
+html.light .text-slate-300,
+html.light .text-slate-400 {
+  color: #475569 !important;
+}
+
+html.light nav {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+}
+
+html.light select,
+html.light input,
+html.light textarea {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}

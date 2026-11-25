@@ -120,16 +120,7 @@ export default function BenchmarkPage() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleRerunTestBatch}
-                  disabled={isRunningBatch}
-                  className="px-4 py-2 saas-btn-primary text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-md disabled:opacity-50"
-                >
-                  {isRunningBatch ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                  <span>{isRunningBatch ? "Executing Sweep..." : "Run Benchmark Sweep"}</span>
-                </button>
-              </div>
+              
             </div>
 
             <KpiCards kpis={data.kpis} system={data.system} />

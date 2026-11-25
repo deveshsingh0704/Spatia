@@ -1302,7 +1302,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
 
                   {/* ASSISTANT RESPONSE CARD */}
                   <div className="flex justify-start">
-                    <div className="max-w-3xl w-full rounded-2xl rounded-tl-sm bg-[var(--surface-overlay)] p-4 space-y-3.5">
+                    <div className="max-w-3xl w-full rounded-2xl rounded-tl-sm bg-[var(--surface-overlay)] p-4 space-y-3.5 mb-15">
                       {msg.status === "generating" && (
                         <div className="space-y-3 py-2">
                           <div className="flex items-center justify-between text-xs">

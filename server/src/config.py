@@ -28,8 +28,8 @@ SD15_FINETUNED_EXP_DIR = EXPERIMENTS_DIR / "SD15_FineTuned"
 for directory in [OUTPUTS_DIR, GENERATED_DIR, EXPERIMENTS_DIR, SD15_EXP_DIR, SD15_FINETUNED_EXP_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
-# Path to our custom fine-tuned bedroom LoRA weights
-LORA_WEIGHTS_PATH = OUTPUTS_DIR / "sd15_bedroom_lora" / "final_bedroom_lora.safetensors"
+# Path to our custom fine-tuned bedroom LoRA weights (checkpoint-500 avoids late-epoch collapse)
+LORA_WEIGHTS_PATH = OUTPUTS_DIR / "sd15_bedroom_lora" / "checkpoint-500" / "adapter_model.safetensors"
 
 # Hardware Detection and Precision Setup
 # RTX 4050 Laptop GPU has 6GB VRAM.

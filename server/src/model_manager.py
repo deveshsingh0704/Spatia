@@ -121,7 +121,7 @@ class ModelManager:
 
             # Load kwargs tailored to pipeline type
             load_kwargs = {
-                "dtype": TORCH_DTYPE,
+                "torch_dtype": TORCH_DTYPE,
                 "low_cpu_mem_usage": True,
             }
             if pipeline_cls_name != "StableDiffusionXLPipeline":
@@ -132,7 +132,11 @@ class ModelManager:
             if hf_token:
                 load_kwargs["token"] = hf_token
 
-            pipe = pipeline_class.from_pretrained(model_id, **load_kwargs)
+            # Prefer local Hugging Face cache first to avoid network timeouts/blocks
+            try:
+                pipe = pipeline_class.from_pretrained(model_id, local_files_only=True, **load_kwargs)
+            except Exception:
+                pipe = pipeline_class.from_pretrained(model_id, **load_kwargs)
 
             # 4. Apply device placement & memory optimization profiles
             if DEVICE == "cuda":
@@ -153,11 +157,20 @@ class ModelManager:
                 if lora_path.exists():
                     print(f"[ModelManager] Injecting fine-tuned Bedroom LoRA weights from {lora_path}...")
                     lora_scale = config.get("lora_scale", 0.8)
-                    pipe.load_lora_weights(str(lora_path.parent), weight_name=lora_path.name)
+                    from safetensors.torch import load_file as load_safetensors
+                    raw_sd = load_safetensors(str(lora_path))
+                    if any(k.startswith("base_model.model.") for k in raw_sd):
+                        fixed_sd = {
+                            ("unet." + k[len("base_model.model."):] if k.startswith("base_model.model.") else k): v
+                            for k, v in raw_sd.items()
+                        }
+                        pipe.load_lora_weights(fixed_sd)
+                    else:
+                        pipe.load_lora_weights(str(lora_path.parent), weight_name=lora_path.name)
                     # Fuse LoRA with scale 0.8: Balances realistic LSUN bedroom layout with base SD 1.5 crispness
                     pipe.fuse_lora(lora_scale=lora_scale)
                     print(f"[ModelManager] Fine-tuned LoRA adapter active with optimal weight scale {lora_scale}.")
-                else:  
+                else:
                     print(f"[ModelManager] Warning: LoRA path {lora_path} not found. Running baseline weights.")
 
             # Store active pipeline

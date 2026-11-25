@@ -16,8 +16,13 @@ if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 load_dotenv(SERVER_ROOT / ".env", override=False)
 
-# Hardware and System Detection via PyTorch & psutil
-import torch
+# Hardware and System Detection (torch is optional for lightweight CPU API deployments)
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None  # type: ignore
+    TORCH_AVAILABLE = False
 import psutil
 
 app = FastAPI(
@@ -26,10 +31,13 @@ app = FastAPI(
     description="Deterministic Non-Markovian Sampling & Multi-Model Diffusion Benchmark Engine"
 )
 
-# Enable CORS for React frontend
+# Enable CORS for React frontend (supports local dev, Vercel deployments, and explicit ALLOWED_ORIGINS)
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+_allowed_origins = [o.strip().rstrip("/") for o in _raw_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
+    allow_origin_regex=os.getenv("ALLOWED_ORIGIN_REGEX", r"https://.*\.vercel\.app"),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,20 +83,30 @@ def get_generator():
 
 def get_live_hardware_telemetry() -> Dict[str, Any]:
     """Dynamically queries active GPU, VRAM, and host RAM without hardcoding."""
-    cuda_avail = torch.cuda.is_available()
+    cuda_avail = bool(TORCH_AVAILABLE and torch is not None and torch.cuda.is_available())
     mem = psutil.virtual_memory()
 
     total_ram_gb = round(mem.total / (1024**3), 2)
     used_ram_gb = round(mem.used / (1024**3), 2)
     ram_usage_pct = mem.percent
+    gpu_worker_url = os.getenv("GPU_WORKER_URL", "").strip()
 
-    if cuda_avail:
+    if cuda_avail and torch is not None:
         gpu_name = torch.cuda.get_device_name(0)
         vram_total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         vram_alloc = torch.cuda.memory_allocated(0) / (1024**3)
         vram_reserved = torch.cuda.memory_reserved(0) / (1024**3)
         vram_pct = int((vram_reserved / vram_total) * 100) if vram_total > 0 else 0
         torch_device = "cuda"
+        pytorch_ver = f"PyTorch {torch.__version__}"
+    elif gpu_worker_url:
+        gpu_name = "Modal Serverless GPU"
+        vram_total = 16.0
+        vram_alloc = 0.0
+        vram_reserved = 0.0
+        vram_pct = 0
+        torch_device = "cuda"
+        pytorch_ver = "Cloud Serverless GPU"
     else:
         gpu_name = "CPU Compute Core"
         vram_total = 0.0
@@ -96,12 +114,13 @@ def get_live_hardware_telemetry() -> Dict[str, Any]:
         vram_reserved = 0.0
         vram_pct = 0
         torch_device = "cpu"
+        pytorch_ver = f"PyTorch {torch.__version__}" if TORCH_AVAILABLE and torch is not None else "CPU API Node"
 
     return {
-        "node": "LOCAL-NODE-01",
+        "node": "CLOUD-API-01" if gpu_worker_url else "LOCAL-NODE-01",
         "device_name": gpu_name,
         "device_type": torch_device,
-        "cuda_available": cuda_avail,
+        "cuda_available": cuda_avail or bool(gpu_worker_url),
         "vram_total_gb": round(vram_total, 2),
         "vram_used_gb": round(vram_alloc, 2),
         "vram_reserved_gb": round(vram_reserved, 2),
@@ -109,7 +128,7 @@ def get_live_hardware_telemetry() -> Dict[str, Any]:
         "total_ram_gb": total_ram_gb,
         "used_ram_gb": used_ram_gb,
         "ram_usage_percent": ram_usage_pct,
-        "pytorch_version": f"PyTorch {torch.__version__}",
+        "pytorch_version": pytorch_ver,
         "prd_spec": "PRD §1.3 • §6.5 VALIDATED"
     }
 
@@ -628,13 +647,18 @@ class RunBenchmarkRequest(BaseModel):
 
 @app.post("/api/benchmark/run")
 def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
+    cuda_label = (
+        torch.cuda.get_device_name(0)
+        if TORCH_AVAILABLE and torch is not None and torch.cuda.is_available()
+        else ("Modal Serverless GPU" if os.getenv("GPU_WORKER_URL", "").strip() else "CPU")
+    )
     return {
         "status": "queued",
         "job_id": f"bench_{int(time.time() * 1000)}",
         "models": req.models,
         "samplers": req.samplers,
         "seed": req.seed,
-        "message": f"Benchmark dispatched on {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}"
+        "message": f"Benchmark dispatched on {cuda_label}"
     }
 
 
@@ -740,37 +764,80 @@ async def generate_image(
         resolution = (512, 512)
 
     try:
-        print(
-            f"\n[Generate] Starting: model='{req.model_name}' | sampler={req.sampler_name} | "
-            f"res={resolution[0]}x{resolution[1]} | steps={req.steps} | seed={req.seed}",
-            flush=True,
-        )
-        generator = get_generator()
-        img, metadata = await asyncio.to_thread(
-            generator.generate,
-            prompt=req.prompt,
-            negative_prompt=req.negative_prompt,
-            model_name=req.model_name,
-            sampler_name=req.sampler_name,
-            steps=req.steps,
-            guidance_scale=req.guidance_scale,
-            seed=req.seed,
-            resolution=resolution,
-            callback=on_step_callback
-        )
+        gpu_worker_url = os.getenv("GPU_WORKER_URL", "").strip()
+        gpu_worker_secret = os.getenv("GPU_WORKER_SECRET", "").strip()
+        hw = get_live_hardware_telemetry()
+        from services.storage import get_storage_service
+        storage = get_storage_service()
 
-        elapsed_total = round(time.perf_counter() - start_time, 2)
-        print(f"[Generate] Diffusion finished in {elapsed_total}s", flush=True)
+        canonical_image_url = None
+        display_image_url = None
+        storage_key = None
+        metadata = ""
+        vram_mb = 0.0
+        device_label = hw["device_name"]
 
-        if img is not None:
-            # Save using flexible Storage Service (S3 / R2 if credentials exist, else server/outputs/gallery/)
-            from services.storage import get_storage_service
-            from models.gallery import Generation
-            from models.user import AsyncSessionLocal
+        if gpu_worker_url:
+            print(
+                f"\n[Generate -> Modal GPU] Dispatching: model='{req.model_name}' | sampler={req.sampler_name} | "
+                f"res={resolution[0]}x{resolution[1]} | steps={req.steps} | seed={req.seed}",
+                flush=True,
+            )
+            import urllib.request as _urlreq
+            worker_payload = json.dumps({
+                "prompt": req.prompt,
+                "negative_prompt": req.negative_prompt or "",
+                "model_name": req.model_name,
+                "sampler_name": req.sampler_name,
+                "steps": req.steps,
+                "guidance_scale": req.guidance_scale,
+                "seed": req.seed,
+                "width": resolution[0],
+                "height": resolution[1],
+            }).encode()
+            req_headers = {"Content-Type": "application/json"}
+            if gpu_worker_secret:
+                req_headers["Authorization"] = f"Bearer {gpu_worker_secret}"
 
-            hw = get_live_hardware_telemetry()
+            def _call_remote_gpu():
+                r = _urlreq.Request(gpu_worker_url, data=worker_payload, headers=req_headers, method="POST")
+                with _urlreq.urlopen(r, timeout=180) as resp:
+                    return json.loads(resp.read().decode())
+
+            remote_res = await asyncio.to_thread(_call_remote_gpu)
+            elapsed_total = round(time.perf_counter() - start_time, 2)
+            canonical_image_url = remote_res["canonical_image_url"]
+            storage_key = remote_res["storage_key"]
+            display_image_url = storage.resolve_url(canonical_image_url, storage_key) or canonical_image_url
+            vram_mb = float(remote_res.get("peak_vram_mb", 0.0))
+            device_label = remote_res.get("device", "Modal Serverless GPU")
+            metadata = remote_res.get("metadata", "Generated via Modal Serverless GPU")
+            print(f"[Generate -> Modal GPU] Completed in {elapsed_total}s ({storage_key})", flush=True)
+        else:
+            print(
+                f"\n[Generate] Starting: model='{req.model_name}' | sampler={req.sampler_name} | "
+                f"res={resolution[0]}x{resolution[1]} | steps={req.steps} | seed={req.seed}",
+                flush=True,
+            )
+            generator = get_generator()
+            img, metadata = await asyncio.to_thread(
+                generator.generate,
+                prompt=req.prompt,
+                negative_prompt=req.negative_prompt,
+                model_name=req.model_name,
+                sampler_name=req.sampler_name,
+                steps=req.steps,
+                guidance_scale=req.guidance_scale,
+                seed=req.seed,
+                resolution=resolution,
+                callback=on_step_callback
+            )
+            elapsed_total = round(time.perf_counter() - start_time, 2)
+            print(f"[Generate] Diffusion finished in {elapsed_total}s", flush=True)
+            if img is None:
+                raise HTTPException(status_code=500, detail=str(metadata))
+
             vram_mb = round(hw["vram_used_gb"] * 1024, 1)
-
             embed_meta = {
                 "prompt": req.prompt,
                 "negative_prompt": req.negative_prompt or "",
@@ -782,12 +849,14 @@ async def generate_image(
                 "resolution": f"{resolution[0]}x{resolution[1]}",
                 "latency_sec": elapsed_total,
                 "peak_vram_mb": vram_mb,
-                "device": hw["device_name"],
+                "device": device_label,
             }
-
-            storage = get_storage_service()
             canonical_image_url, storage_key = storage.save_image(img, filename_prefix="mockup", metadata=embed_meta)
             display_image_url = storage.resolve_url(canonical_image_url, storage_key) or canonical_image_url
+
+        if canonical_image_url and storage_key:
+            from models.gallery import Generation
+            from models.user import AsyncSessionLocal
 
             # Clean, intelligent prompt-derived title
             clean_title = req.prompt.strip().rstrip(".,;")

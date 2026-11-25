@@ -11,8 +11,8 @@ class AuthSettings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./latentcraft.db")
-    COOKIE_SAMESITE: str = "lax"
-    COOKIE_SECURE: bool = False  # Set to True in HTTPS production
+    COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax")
+    COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
 
     class Config:
         env_file = str(ENV_PATH)

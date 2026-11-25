@@ -123,9 +123,9 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ activeTab }) => {
         {/* Top: Brand Mark & Navigation */}
         <div className="flex flex-col gap-4">
           <button
-            onClick={() => router.push("/studio")}
+            onClick={() => router.push("/")}
             aria-label="LatentCraft Home"
-            className="flex items-center gap-3 p-1.5 rounded-xl hover:bg-[var(--surface-overlay)] transition-all text-left group overflow-hidden"
+            className="flex items-center gap-3 p-1.5 rounded-xl hover:bg-[var(--surface-overlay)] transition-all text-left group overflow-hidden cursor-pointer"
           >
             <div
               className="w-9 h-9 min-w-9 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform duration-200"

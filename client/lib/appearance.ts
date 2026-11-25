@@ -334,11 +334,11 @@ function hexToRgba(hex: string, alpha: number): string {
 
 export function loadAppearanceSettings(): AppearanceSettings {
   if (typeof window === "undefined") {
-    return { theme: "dark", colorTheme: "teal-tangerine", fontPreset: "jakarta-inter", fontScale: "default" };
+    return { theme: "dark", colorTheme: "graphite", fontPreset: "jakarta-inter", fontScale: "default" };
   }
   try {
     const theme = (localStorage.getItem(STORAGE_KEYS.theme) as ThemeMode) || "dark";
-    const colorTheme = (localStorage.getItem(STORAGE_KEYS.colorTheme) as ColorThemeId) || "teal-tangerine";
+    const colorTheme = (localStorage.getItem(STORAGE_KEYS.colorTheme) as ColorThemeId) || "graphite";
     const fontPreset = (localStorage.getItem(STORAGE_KEYS.fontPreset) as FontPresetId) || "jakarta-inter";
     const fontScale = (localStorage.getItem(STORAGE_KEYS.fontScale) as FontScaleId) || "default";
     return {
@@ -348,7 +348,7 @@ export function loadAppearanceSettings(): AppearanceSettings {
       fontScale: FONT_SCALE_OPTIONS.some((s) => s.id === fontScale) ? fontScale : "default",
     };
   } catch {
-    return { theme: "dark", colorTheme: "teal-tangerine", fontPreset: "jakarta-inter", fontScale: "default" };
+    return { theme: "dark", colorTheme: "graphite", fontPreset: "jakarta-inter", fontScale: "default" };
   }
 }
 

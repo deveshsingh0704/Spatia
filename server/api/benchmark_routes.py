@@ -8,7 +8,12 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, asc, delete
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None  # type: ignore
+    TORCH_AVAILABLE = False
 
 from models.user import get_db, AsyncSessionLocal
 from models.benchmark import BenchmarkRun
@@ -16,7 +21,7 @@ import psutil
 
 def get_live_hardware_telemetry() -> Dict[str, Any]:
     """Dynamically queries active GPU, VRAM, and host RAM."""
-    cuda_avail = torch.cuda.is_available()
+    cuda_avail = bool(TORCH_AVAILABLE and torch is not None and torch.cuda.is_available())
     mem = psutil.virtual_memory()
 
     total_ram_gb = round(mem.total / (1024**3), 2)

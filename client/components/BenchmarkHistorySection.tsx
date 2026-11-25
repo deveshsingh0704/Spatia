@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { History, RefreshCw, CheckCircle2 } from "lucide-react";
+import { apiUrl } from "@/lib/api";
 
 interface PastBenchmarkRecord {
   id: string;
@@ -22,7 +23,7 @@ export const BenchmarkHistorySection: React.FC = () => {
   const fetchHistory = async () => {
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8001/api/benchmark/history");
+      const res = await fetch(apiUrl("/api/benchmark/history"));
       if (res.ok) {
         const data = await res.json();
         if (data.history) {

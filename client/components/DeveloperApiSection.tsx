@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { Copy, Check, ExternalLink } from "lucide-react";
 import { SystemInfo } from "@/types/benchmark";
+import { API_BASE_URL, apiUrl } from "@/lib/api";
 
 interface DeveloperApiSectionProps {
   system: SystemInfo;
@@ -55,7 +56,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
         {
           status: "completed",
           id: "9c3f41a2-...",
-          image_url: "http://localhost:8001/outputs/gallery/mockup_abc123.png",
+          image_url: apiUrl("/outputs/gallery/mockup_abc123.png"),
           seed: 42,
           steps: 20,
           guidance_scale: 7.5,
@@ -68,7 +69,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
         null,
         2
       ),
-      exampleCurl: `curl -X POST "http://localhost:8001/api/generate" \\
+      exampleCurl: `curl -X POST "${apiUrl("/api/generate")}" \\
   -H "Content-Type: application/json" \\
   -d '{"prompt": "Luxury bedroom penthouse", "sampler_name": "DDIM", "steps": 20, "resolution": "768x768", "seed": 42}'`
     },
@@ -80,8 +81,8 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
         "Persistent SSE stream emitting real-time percentage completed, active denoising step count, elapsed wall-clock seconds, and ETA estimation.",
       prdRef: "US-01 • NFR-06",
       parameters: "job_id (string, path parameter): Unique tracking ID for the generation or benchmark job.",
-      responseBody: `data: {"status": "running", "step": 12, "total_steps": 20, "percent": 60, "elapsed_sec": 1.72, "eta_sec": 1.15}\n\ndata: {"status": "completed", "percent": 100, "image_url": "http://localhost:8001/outputs/gallery/..."}`,
-      exampleCurl: `curl -N -H "Accept: text/event-stream" "http://localhost:8001/api/generate/stream/job_1791834968"`
+      responseBody: `data: {"status": "running", "step": 12, "total_steps": 20, "percent": 60, "elapsed_sec": 1.72, "eta_sec": 1.15}\n\ndata: {"status": "completed", "percent": 100, "image_url": "${apiUrl("/outputs/gallery/...")}"}`,
+      exampleCurl: `curl -N -H "Accept: text/event-stream" "${apiUrl("/api/generate/stream/job_1791834968")}"`
     },
     {
       method: "GET",
@@ -97,7 +98,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
             {
               id: "9c3f41a2-...",
               title: "Modern Luxury Master Bedroom",
-              image_url: "http://localhost:8001/outputs/gallery/mockup_abc123.png",
+              image_url: apiUrl("/outputs/gallery/mockup_abc123.png"),
               prompt: "...",
               negative_prompt: "blurry, grain",
               seed: 42,
@@ -111,7 +112,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
         null,
         2
       ),
-      exampleCurl: `curl -X GET "http://localhost:8001/api/gallery?page=1&page_size=10"`
+      exampleCurl: `curl -X GET "${apiUrl("/api/gallery?page=1&page_size=10")}"`
     },
     {
       method: "POST",
@@ -143,7 +144,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
         null,
         2
       ),
-      exampleCurl: `curl -X POST "http://localhost:8001/api/benchmark/run-custom" \\
+      exampleCurl: `curl -X POST "${apiUrl("/api/benchmark/run-custom")}" \\
   -H "Content-Type: application/json" \\
   -d '{"samplers": ["DDIM", "DDPM"], "steps_list": [10, 20, 30], "seed": 42}'`
     },
@@ -172,7 +173,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
         null,
         2
       ),
-      exampleCurl: `curl -X GET "http://localhost:8001/api/benchmark/history"`
+      exampleCurl: `curl -X GET "${apiUrl("/api/benchmark/history")}"`
     },
     {
       method: "GET",
@@ -182,7 +183,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
       prdRef: "US-10",
       parameters: "None",
       responseBody: JSON.stringify({ status: "healthy", engine: "LatentCraft v2.4.1" }, null, 2),
-      exampleCurl: `curl -X GET "http://localhost:8001/api/health"`
+      exampleCurl: `curl -X GET "${apiUrl("/api/health")}"`
     }
   ];
 
@@ -210,7 +211,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
           </div>
 
           <a
-            href="http://localhost:8001/docs"
+            href={apiUrl("/docs")}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl saas-btn-primary text-xs"
@@ -223,7 +224,7 @@ export const DeveloperApiSection: React.FC<DeveloperApiSectionProps> = () => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2 text-xs font-mono">
           <div className="p-3.5 rounded-2xl bg-[var(--surface-overlay)]">
             <span className="text-[10px] text-[var(--muted-foreground)] uppercase block">Host Server</span>
-            <span className="text-[var(--foreground)] font-bold">http://localhost:8001</span>
+            <span className="text-[var(--foreground)] font-bold truncate block">{API_BASE_URL}</span>
           </div>
 
           <div className="p-3.5 rounded-2xl bg-[var(--surface-overlay)]">

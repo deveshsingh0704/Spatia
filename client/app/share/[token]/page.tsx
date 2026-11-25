@@ -15,6 +15,7 @@ import {
   AlertCircle
 } from "lucide-react";
 import { ChatSessionItem, GenerationItem } from "@/types/gallery";
+import { apiUrl } from "@/lib/api";
 
 export default function SharedChatPage() {
   const params = useParams<{ token: string }>();
@@ -33,7 +34,7 @@ export default function SharedChatPage() {
     (async () => {
       setIsLoading(true);
       try {
-        const res = await fetch(`http://localhost:8001/api/chats/shared/${encodeURIComponent(token)}`);
+        const res = await fetch(apiUrl(`/api/chats/shared/${encodeURIComponent(token)}`));
         if (!res.ok) {
           if (!cancelled) setErrorMsg("This shared chat session is unavailable or sharing has been turned off.");
           return;
@@ -190,7 +191,7 @@ export default function SharedChatPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                         <span className="font-semibold text-[var(--foreground)]">{msg.title}</span>
                         <a
-                          href={`http://localhost:8001/api/gallery/${msg.id}/download`}
+                          href={apiUrl(`/api/gallery/${msg.id}/download`)}
                           className="px-3 py-1.5 saas-btn-secondary text-xs inline-flex items-center gap-1.5"
                         >
                           <Download className="w-3.5 h-3.5" />

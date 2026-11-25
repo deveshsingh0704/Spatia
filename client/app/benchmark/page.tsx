@@ -13,6 +13,7 @@ import { BenchmarkHistorySection } from "@/components/BenchmarkHistorySection";
 import { INITIAL_BENCHMARK_DATA } from "@/data/benchmarkData";
 import { BenchmarkData, CheckpointItem } from "@/types/benchmark";
 import { Play, Download, RefreshCw } from "lucide-react";
+import { apiUrl } from "@/lib/api";
 
 export default function BenchmarkPage() {
   const [data, setData] = useState<BenchmarkData>(INITIAL_BENCHMARK_DATA);
@@ -23,13 +24,13 @@ export default function BenchmarkPage() {
   useEffect(() => {
     async function syncBackendData() {
       try {
-        const res = await fetch("http://localhost:8001/api/benchmark");
+        const res = await fetch(apiUrl("/api/benchmark"));
         if (res.ok) {
           const remoteData: BenchmarkData = await res.json();
           setData(remoteData);
         }
       } catch (e) {
-        console.warn("Could not connect to FastAPI server at localhost:8001", e);
+        console.warn("Could not connect to FastAPI server:", e);
       }
     }
 
@@ -42,7 +43,7 @@ export default function BenchmarkPage() {
     setIsRunningBatch(true);
     setNotification("Dispatching empirical diffusion benchmark sweep...");
     try {
-      const res = await fetch("http://localhost:8001/api/benchmark/run", {
+      const res = await fetch(apiUrl("/api/benchmark/run"), {
         method: "POST",
         headers: { "Content-Type": "application/json" }
       });

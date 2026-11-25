@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { GlassSelect } from "@/components/ui/GlassSelect";
 import { useAuth } from "@/context/AuthContext";
+import { apiUrl, resolveMediaUrl } from "@/lib/api";
 import { SystemInfo } from "@/types/benchmark";
 import {
   ResponsiveContainer,
@@ -218,7 +219,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     guidanceScale: it.guidance_scale || 7.5,
     seed: it.seed ?? 42,
     resolution: it.resolution || "512x512",
-    imageUrl: it.image_url ? it.image_url.replace(":8000/", ":8001/") : undefined,
+    imageUrl: resolveMediaUrl(it.image_url),
     latencySec: it.latency_sec,
     peakVramMb: it.peak_vram_mb,
     isFavorite: Boolean(it.is_favorite),
@@ -230,7 +231,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   // Fetch persisted generations for the Recent History Picker
   const fetchHistoryStrip = async () => {
     try {
-      const res = await fetch("http://localhost:8001/api/gallery?page=1&page_size=24&sort_by=created_at_desc");
+      const res = await fetch(apiUrl("/api/gallery?page=1&page_size=24&sort_by=created_at_desc"));
       if (res.ok) {
         const data = await res.json();
         const items = data.items || [];
@@ -246,7 +247,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   const loadChatSessionById = async (chatId: string) => {
     setIsRestoringChat(true);
     try {
-      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(chatId)}`);
+      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(chatId)}`));
       if (!res.ok) {
         if (res.status === 404 && typeof window !== "undefined") {
           localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
@@ -331,7 +332,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       if (urlGenId) {
         void (async () => {
           try {
-            const res = await fetch(`http://localhost:8001/api/gallery/${encodeURIComponent(urlGenId)}`);
+            const res = await fetch(apiUrl(`/api/gallery/${encodeURIComponent(urlGenId)}`));
             if (res.ok) {
               const it = await res.json();
               if (it.chat_id) {
@@ -435,7 +436,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
 
     let eventSource: EventSource | null = null;
     try {
-      eventSource = new EventSource(`http://localhost:8001/api/generate/stream/${jobId}`);
+      eventSource = new EventSource(apiUrl(`/api/generate/stream/${jobId}`));
       eventSource.onmessage = (event) => {
         try {
           const p = JSON.parse(event.data);
@@ -454,7 +455,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       if (accessToken) {
         headers.Authorization = `Bearer ${accessToken}`;
       }
-      const res = await fetch(`http://localhost:8001/api/generate?job_id=${jobId}`, {
+      const res = await fetch(apiUrl(`/api/generate?job_id=${jobId}`), {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -474,7 +475,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
 
       if (res.ok) {
         const data = await res.json();
-        const fixedUrl = data.image_url ? data.image_url.replace(":8000/", ":8001/") : undefined;
+        const fixedUrl = resolveMediaUrl(data.image_url);
         if (data.chat_id) {
           setActiveChatId(data.chat_id);
           if (data.chat_title) setActiveChatTitle(data.chat_title);
@@ -538,7 +539,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     );
     if (msg.dbId) {
       try {
-        await fetch(`http://localhost:8001/api/gallery/${msg.dbId}`, {
+        await fetch(apiUrl(`/api/gallery/${msg.dbId}`), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ is_favorite: nextFav })
@@ -564,7 +565,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     if (!msg.imageUrl && !msg.dbId) return;
     const a = document.createElement("a");
     a.href = msg.dbId
-      ? `http://localhost:8001/api/gallery/${msg.dbId}/download`
+      ? apiUrl(`/api/gallery/${msg.dbId}/download`)
       : (msg.imageUrl as string);
     a.download = `latentcraft_seed${msg.seed}_${msg.resolution}_${msg.dbId || msg.localId}.png`;
     document.body.appendChild(a);
@@ -591,7 +592,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     const nextSaved = !isChatSaved;
     setIsChatSaved(nextSaved);
     try {
-      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(activeChatId)}`, {
+      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(activeChatId)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -614,7 +615,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   const handleToggleShareChat = async (enable: boolean) => {
     if (!activeChatId) return;
     try {
-      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(activeChatId)}/share`, {
+      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(activeChatId)}/share`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_shared: enable })
@@ -674,7 +675,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
 
     let eventSource: EventSource | null = null;
     try {
-      eventSource = new EventSource(`http://localhost:8001/api/generate/stream/${jobId}`);
+      eventSource = new EventSource(apiUrl(`/api/generate/stream/${jobId}`));
       eventSource.onmessage = (event) => {
         try {
           const p = JSON.parse(event.data);
@@ -687,7 +688,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     } catch {}
 
     try {
-      const res = await fetch(`http://localhost:8001/api/benchmark/run-custom?job_id=${jobId}`, {
+      const res = await fetch(apiUrl(`/api/benchmark/run-custom?job_id=${jobId}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

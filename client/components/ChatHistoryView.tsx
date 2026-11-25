@@ -21,6 +21,7 @@ import {
   Globe
 } from "lucide-react";
 import { ChatSessionItem } from "@/types/gallery";
+import { apiUrl } from "@/lib/api";
 
 export const ChatHistoryView: React.FC = () => {
   const router = useRouter();
@@ -45,7 +46,7 @@ export const ChatHistoryView: React.FC = () => {
       if (filterMode === "saved") params.append("saved_only", "true");
       if (filterMode === "shared") params.append("shared_only", "true");
 
-      const res = await fetch(`http://localhost:8001/api/chats?${params.toString()}`);
+      const res = await fetch(apiUrl(`/api/chats?${params.toString()}`));
       if (res.ok) {
         const data = await res.json();
         setChats(data.chats || []);
@@ -72,7 +73,7 @@ export const ChatHistoryView: React.FC = () => {
     const nextSaved = !chat.is_saved;
     setChats((prev) => prev.map((c) => (c.id === chat.id ? { ...c, is_saved: nextSaved } : c)));
     try {
-      await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(chat.id)}`, {
+      await fetch(apiUrl(`/api/chats/${encodeURIComponent(chat.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_saved: nextSaved })
@@ -85,7 +86,7 @@ export const ChatHistoryView: React.FC = () => {
   const handleRenameSubmit = async () => {
     if (!renameTarget || !renameTitle.trim()) return;
     try {
-      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(renameTarget.id)}`, {
+      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(renameTarget.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: renameTitle.trim() })
@@ -102,7 +103,7 @@ export const ChatHistoryView: React.FC = () => {
 
   const handleShareToggle = async (chat: ChatSessionItem, enable: boolean) => {
     try {
-      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(chat.id)}/share`, {
+      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(chat.id)}/share`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_shared: enable })
@@ -124,7 +125,7 @@ export const ChatHistoryView: React.FC = () => {
     if (!deleteTarget) return;
     try {
       const res = await fetch(
-        `http://localhost:8001/api/chats/${encodeURIComponent(deleteTarget.id)}?delete_images=${deleteImagesAlso}`,
+        apiUrl(`/api/chats/${encodeURIComponent(deleteTarget.id)}?delete_images=${deleteImagesAlso}`),
         { method: "DELETE" }
       );
       if (res.ok) {

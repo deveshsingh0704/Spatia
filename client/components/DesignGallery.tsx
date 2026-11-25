@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { GlassSelect } from "@/components/ui/GlassSelect";
 import { GenerationItem, GalleryResponse, CustomLibrary, LibrariesResponse } from "@/types/gallery";
+import { apiUrl, resolveMediaUrl } from "@/lib/api";
 
 export const DesignGallery: React.FC = () => {
   const router = useRouter();
@@ -66,13 +67,13 @@ export const DesignGallery: React.FC = () => {
       if (onlyFavorites) params.append("is_favorite", "true");
       if (selectedLibraryId) params.append("library_id", selectedLibraryId);
 
-      const res = await fetch(`http://localhost:8001/api/gallery?${params.toString()}`);
+      const res = await fetch(apiUrl(`/api/gallery?${params.toString()}`));
       if (res.ok) {
         const data: GalleryResponse = await res.json();
         setItems(
           data.items.map((it) => ({
             ...it,
-            image_url: it.image_url ? it.image_url.replace(":8000/", ":8001/") : it.image_url
+            image_url: resolveMediaUrl(it.image_url) || it.image_url
           }))
         );
         setTotalPages(data.pagination.total_pages);
@@ -87,13 +88,13 @@ export const DesignGallery: React.FC = () => {
 
   const fetchLibraries = async () => {
     try {
-      const res = await fetch("http://localhost:8001/api/gallery/libraries/all");
+      const res = await fetch(apiUrl("/api/gallery/libraries/all"));
       if (res.ok) {
         const data: LibrariesResponse = await res.json();
         setLibraries(
           data.libraries.map((l) => ({
             ...l,
-            cover_image_url: l.cover_image_url ? l.cover_image_url.replace(":8000/", ":8001/") : l.cover_image_url
+            cover_image_url: resolveMediaUrl(l.cover_image_url) ?? l.cover_image_url
           }))
         );
       }
@@ -119,7 +120,7 @@ export const DesignGallery: React.FC = () => {
   const handleToggleFavorite = async (item: GenerationItem, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`http://localhost:8001/api/gallery/${item.id}`, {
+      const res = await fetch(apiUrl(`/api/gallery/${item.id}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_favorite: !item.is_favorite })
@@ -140,7 +141,7 @@ export const DesignGallery: React.FC = () => {
   const handleSaveRename = async () => {
     if (!renameItem || !newTitle.trim()) return;
     try {
-      const res = await fetch(`http://localhost:8001/api/gallery/${renameItem.id}`, {
+      const res = await fetch(apiUrl(`/api/gallery/${renameItem.id}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: newTitle.trim() })
@@ -161,7 +162,7 @@ export const DesignGallery: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await fetch(`http://localhost:8001/api/gallery/${id}`, {
+      const res = await fetch(apiUrl(`/api/gallery/${id}`), {
         method: "DELETE"
       });
       if (res.ok) {
@@ -177,7 +178,7 @@ export const DesignGallery: React.FC = () => {
   const handleCreateLibrary = async () => {
     if (!newLibName.trim()) return;
     try {
-      const res = await fetch("http://localhost:8001/api/gallery/libraries/create", {
+      const res = await fetch(apiUrl("/api/gallery/libraries/create"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newLibName.trim(), description: newLibDesc.trim() || null })
@@ -196,7 +197,7 @@ export const DesignGallery: React.FC = () => {
   const handleAddToLibrary = async (libraryId: string) => {
     if (!addToLibItem) return;
     try {
-      const res = await fetch(`http://localhost:8001/api/gallery/libraries/${libraryId}/items`, {
+      const res = await fetch(apiUrl(`/api/gallery/libraries/${libraryId}/items`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ generation_id: addToLibItem.id })

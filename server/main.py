@@ -49,6 +49,7 @@ from api.gallery import router as gallery_router
 from api.chats import router as chats_router
 from api.benchmark_routes import router as benchmark_router
 from api.deps import get_current_user
+from models.user import AsyncSessionLocal
 from models.user import User, init_db
 
 app.include_router(auth_router)
@@ -346,132 +347,12 @@ def hardware():
     return HardwareInfo(**get_live_hardware_telemetry())
 
 
-@app.get("/api/benchmark", response_model=BenchmarkDataResponse)
-def get_benchmark_data(model: Optional[str] = "Stable Diffusion v1.5"):
-    hw = get_live_hardware_telemetry()
-    
-    qualitative = [
-        {
-            "title": "DDPM 1000 Steps",
-            "subtitle": "Markov Chain",
-            "tag": "GOLD STANDARD",
-            "tag_type": "gold",
-            "image": "/benchmark-samples/ddpm_1000_steps.png",
-            "fid": "3.17",
-            "latency": "28.60s",
-            "description": "Full stochastic schedule. Maximum perceptual fidelity, sharp geometry, and nuanced lighting.",
-            "latency_index": "1.0x (Baseline)"
-        },
-        {
-            "title": "DDPM 100 Steps",
-            "subtitle": "Severe Underfit",
-            "tag": "TRUNCATED / UNCONVERGED",
-            "tag_type": "warning",
-            "image": "/benchmark-samples/ddpm_100_steps.png",
-            "fid": "14.80",
-            "latency": "2.89s",
-            "description": "Premature sampling cutoff without implicit formulation produces prominent high-frequency noise.",
-            "latency_index": "9.9x speedup"
-        },
-        {
-            "title": "DDIM 50 Steps",
-            "subtitle": "η = 0.00",
-            "tag": "OPTIMAL PRODUCTION POINT",
-            "tag_type": "optimal",
-            "image": "/benchmark-samples/ddim_50_steps.png",
-            "fid": "4.82",
-            "latency": "2.84s",
-            "description": "Sharp structural coherence, pristine ambient occlusion, identical spatial composition to ground truth.",
-            "latency_index": "10.1x Speedup"
-        },
-        {
-            "title": "DDIM 10 Steps",
-            "subtitle": "Extreme Acceleration",
-            "tag": "SUB-SECOND DRAFT",
-            "tag_type": "draft",
-            "image": "/benchmark-samples/ddim_10_steps.png",
-            "fid": "11.40",
-            "latency": "0.58s",
-            "description": "Near-instant layout validation. Preserves spatial geometry with minor micro-texture degradation.",
-            "latency_index": "49.3x Speedup"
-        }
-    ]
-
-    kpis = BenchmarkKpis(
-        optimal_operating_point="DDIM @ 50",
-        time_saved_percent=90.1,
-        tradeoff="A 1.65 FID for 10.1x throughput",
-        fid_score=4.82,
-        fid_target=5.0,
-        fid_delta_from_baseline=1.65,
-        perceptual_quality_index=94.8,
-        speedup="10.1x",
-        wall_clock_time_sec=2.84,
-        baseline_time_sec=28.60,
-        compute_cost="$0.00042 / quad output",
-        dataset="LSUN Bedrooms Val",
-        features_count="50,000 Ref Inception Feats",
-        eval_eta=0.00
-    )
-
-    return BenchmarkDataResponse(
-        system=HardwareInfo(**hw),
-        kpis=kpis,
-        fid_curve=BENCHMARK_FID_CURVE,
-        latency_profile=BENCHMARK_LATENCY_PROFILE,
-        qualitative_comparison=qualitative,
-        checkpoints=BENCHMARK_CHECKPOINTS,
-    )
-
-
 import json
 import asyncio
 from fastapi.responses import StreamingResponse
 
 # In-memory progress tracker for generation jobs: {job_id: {step, total_steps, percent, elapsed_sec, eta_sec, status, image_url, ...}}
 ACTIVE_GENERATION_JOBS: Dict[str, Any] = {}
-PAST_BENCHMARK_RESULTS: List[Dict[str, Any]] = []
-
-
-def load_past_benchmarks():
-    """Reads past experiment records from experiment_results.csv if present."""
-    exp_csv = EXPERIMENTS_DIR / "experiment_results.csv"
-    if exp_csv.exists():
-        try:
-            import pandas as pd
-            df = pd.read_csv(exp_csv)
-            records = []
-            for idx, row in df.tail(50).iterrows():
-                # Handle different CSV formats
-                sampler = str(row.get("sampler", "DDIM"))
-                steps = int(row.get("steps", 20))
-                time_s = float(row.get("generation_time_seconds", row.get("generation_time", 2.5)))
-                seed = int(row.get("seed", 42))
-                model = str(row.get("model", "Stable Diffusion v1.5"))
-                records.append({
-                    "id": f"hist_{idx}_{int(time.time())}",
-                    "model": model,
-                    "sampler": sampler,
-                    "steps": steps,
-                    "generation_time": round(time_s, 2),
-                    "seed": seed,
-                    "fid": round(max(3.1, 14.0 - (steps * 0.18) + (1.2 if "DDPM" in sampler else 0.0)), 2),
-                    "status": "COMPLETED"
-                })
-            return records
-        except Exception as e:
-            print(f"[load_past_benchmarks] Note: {e}")
-    return []
-
-
-@app.get("/api/benchmark/history")
-def get_benchmark_history():
-    """Returns past benchmark runs stored on disk and dynamically generated runs."""
-    hist = load_past_benchmarks()
-    # Combine with in-memory runs
-    combined = PAST_BENCHMARK_RESULTS + hist
-    # Return deduplicated or most recent 50
-    return {"history": combined[-50:]}
 
 
 class CustomBenchmarkRunRequest(BaseModel):
@@ -481,10 +362,15 @@ class CustomBenchmarkRunRequest(BaseModel):
     prompt: Optional[str] = "A photorealistic modern luxury architectural penthouse master bedroom interior with floor-to-ceiling panoramic glass windows overlooking a twilight metropolis, minimal warm ambient lighting, elegant oak joinery, 8k visualization"
     negative_prompt: Optional[str] = "ugly, blurry, distorted, low quality, pixelated, bad typography, artifacts"
     seed: int = 42
+    guidance_scale: float = 7.5
 
 
 @app.post("/api/benchmark/run-custom")
-async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[str] = Query(None)):
+async def run_custom_benchmark(
+    req: CustomBenchmarkRunRequest,
+    job_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
     """
     Executes multiple step combinations on selected samplers (DDIM, DDPM).
     Emits real-time SSE progress updates to ACTIVE_GENERATION_JOBS.
@@ -522,6 +408,7 @@ async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[
             current_run_idx += 1
             t0 = time.perf_counter()
             image_url = None
+            canonical_image_url = ""
 
             def on_bench_step(pipe_or_step, step_idx_or_timestep=None, latents=None):
                 nonlocal accumulated_steps_done
@@ -555,7 +442,7 @@ async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[
                     model_name=req.model_name,
                     sampler_name=sampler,
                     steps=steps,
-                    guidance_scale=7.5,
+                    guidance_scale=req.guidance_scale,
                     seed=req.seed,
                     resolution=(512, 512),
                     callback=on_bench_step
@@ -577,6 +464,7 @@ async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[
                             "latency_sec": round(elapsed, 2),
                         },
                     )
+                    canonical_image_url = bench_url or ""
                     image_url = storage.resolve_url(bench_url, bench_key) or bench_url
             except Exception as e:
                 # Calibrated hardware fallback
@@ -600,12 +488,12 @@ async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[
                 "seed": req.seed,
                 "model": req.model_name,
                 "image_url": image_url,
-                "prompt": req.prompt,
+                "canonical_image_url": canonical_image_url,
+                "prompt": req.prompt or "",
                 "vram_mb": round(hw["vram_used_gb"] * 1024 if hw["cuda_available"] else 1200, 1),
                 "timestamp": time.strftime("%H:%M:%S")
             }
             results.append(res_entry)
-            PAST_BENCHMARK_RESULTS.append(res_entry)
 
     # Reformat into curve data for Recharts [ { steps: 10, DDIM_latency, DDPM_latency, DDIM_fid, DDPM_fid } ]
     steps_map: Dict[int, Dict[str, Any]] = {}
@@ -618,6 +506,36 @@ async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[
         steps_map[st][f"{s_key}_fid"] = r["fid"]
 
     graph_data = [steps_map[s] for s in sorted(steps_map.keys())]
+
+    # Persist each run to BenchmarkRun in PostgreSQL
+    try:
+        from models.benchmark import BenchmarkRun
+        async with AsyncSessionLocal() as session:
+            for r in results:
+                lat = float(r.get("latency", 0.0))
+                run_row = BenchmarkRun(
+                    user_id=current_user.id,
+                    batch_id=job_id,
+                    model_name=req.model_name,
+                    sampler_name=r["sampler"],
+                    steps=int(r["steps"]),
+                    latency_sec=lat,
+                    throughput_ips=round(1.0 / max(0.001, lat), 2),
+                    fid_score=float(r.get("fid", 0.0)),
+                    seed=req.seed,
+                    prompt=r.get("prompt") or req.prompt or "",
+                    image_url=(r.get("canonical_image_url") or "")[:512],
+                    peak_vram_mb=float(r.get("vram_mb", 0.0)),
+                    device_name=hw.get("device_name", "GPU")[:100],
+                    status="COMPLETED",
+                )
+                session.add(run_row)
+            await session.commit()
+            print(f"[Benchmark DB] Saved {len(results)} runs for batch_id={job_id} user={current_user.id}")
+    except Exception as db_err:
+        import traceback
+        traceback.print_exc()
+        print(f"[Benchmark DB] Error persisting benchmark runs: {db_err}")
 
     total_bench_elapsed = round(time.perf_counter() - bench_start_time, 2)
     ACTIVE_GENERATION_JOBS[job_id] = {
@@ -632,33 +550,11 @@ async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[
 
     return {
         "status": "completed",
+        "batch_id": job_id,
         "results": results,
         "graph_data": graph_data,
         "tested_samplers": req.samplers,
         "tested_steps": req.steps_list
-    }
-
-
-class RunBenchmarkRequest(BaseModel):
-    models: List[str] = ["Stable Diffusion v1.5"]
-    samplers: List[str] = ["DDIM", "DDPM"]
-    seed: int = 42
-    prompt: Optional[str] = None
-
-@app.post("/api/benchmark/run")
-def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
-    cuda_label = (
-        torch.cuda.get_device_name(0)
-        if TORCH_AVAILABLE and torch is not None and torch.cuda.is_available()
-        else ("Modal Serverless GPU" if os.getenv("GPU_WORKER_URL", "").strip() else "CPU")
-    )
-    return {
-        "status": "queued",
-        "job_id": f"bench_{int(time.time() * 1000)}",
-        "models": req.models,
-        "samplers": req.samplers,
-        "seed": req.seed,
-        "message": f"Benchmark dispatched on {cuda_label}"
     }
 
 

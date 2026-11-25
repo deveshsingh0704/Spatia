@@ -6,25 +6,54 @@ import { LeftSidebar } from "@/components/LeftSidebar";
 import { KpiCards } from "@/components/KpiCards";
 import { ChartsSection } from "@/components/ChartsSection";
 import { QualitativeSection } from "@/components/QualitativeSection";
-import FineTunedComparisonSection from "@/components/FineTunedComparisonSection";
-import { CheckpointsTable } from "@/components/CheckpointsTable";
-import { InspectModal } from "@/components/InspectModal";
 import { BenchmarkHistorySection } from "@/components/BenchmarkHistorySection";
-import { INITIAL_BENCHMARK_DATA } from "@/data/benchmarkData";
-import { BenchmarkData, CheckpointItem } from "@/types/benchmark";
-import { Play, Download, RefreshCw } from "lucide-react";
+import { BenchmarkData } from "@/types/benchmark";
+import { Play, RefreshCw } from "lucide-react";
 import { apiUrl } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+
+const EMPTY_BENCHMARK_DATA: BenchmarkData = {
+  system: {
+    node: "LOCAL-NODE",
+    device_name: "Loading telemetry...",
+    vram_total_gb: 0,
+    vram_ready_percent: 0,
+    vram_used_gb: 0,
+    pytorch_version: "",
+    prd_spec: "",
+  },
+  kpis: {
+    optimal_operating_point: "Loading...",
+    time_saved_percent: 0,
+    tradeoff: "Fetching real runs",
+    fid_score: 0,
+    fid_target: 5.0,
+    fid_delta_from_baseline: 0,
+    perceptual_quality_index: 0,
+    speedup: "0x",
+    wall_clock_time_sec: 0,
+    baseline_time_sec: 0,
+    compute_cost: "$0.00",
+    dataset: "Real-Time Inference",
+    features_count: "0 Runs",
+    eval_eta: 0,
+  },
+  fid_curve: [],
+  latency_profile: [],
+  qualitative_comparison: [],
+  checkpoints: [],
+};
 
 export default function BenchmarkPage() {
-  const [data, setData] = useState<BenchmarkData>(INITIAL_BENCHMARK_DATA);
-  const [inspectedCheckpoint, setInspectedCheckpoint] = useState<CheckpointItem | null>(null);
+  const { fetchWithAuth } = useAuth();
+  const [data, setData] = useState<BenchmarkData>(EMPTY_BENCHMARK_DATA);
   const [isRunningBatch, setIsRunningBatch] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
   useEffect(() => {
     async function syncBackendData() {
       try {
-        const res = await fetch(apiUrl("/api/benchmark"));
+        const res = await fetchWithAuth(apiUrl("/api/benchmark"));
         if (res.ok) {
           const remoteData: BenchmarkData = await res.json();
           setData(remoteData);
@@ -37,13 +66,13 @@ export default function BenchmarkPage() {
     syncBackendData();
     const interval = setInterval(syncBackendData, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchWithAuth]);
 
   const handleRerunTestBatch = async () => {
     setIsRunningBatch(true);
     setNotification("Dispatching empirical diffusion benchmark sweep...");
     try {
-      const res = await fetch(apiUrl("/api/benchmark/run"), {
+      const res = await fetchWithAuth(apiUrl("/api/benchmark/run"), {
         method: "POST",
         headers: { "Content-Type": "application/json" }
       });
@@ -61,27 +90,6 @@ export default function BenchmarkPage() {
       setIsRunningBatch(false);
       setTimeout(() => setNotification(null), 5000);
     }
-  };
-
-  const handleExportCsv = () => {
-    const headers = ["ID", "Pipeline", "Steps", "Latency (s)", "FID", "Throughput (img/s)"];
-    const rows = data.checkpoints.map((c) => [
-      c.id,
-      `"${c.pipeline}"`,
-      c.steps,
-      c.latency,
-      c.fid,
-      c.throughput
-    ]);
-    const csvContent =
-      "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `latentcraft_benchmark_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   return (
@@ -114,13 +122,6 @@ export default function BenchmarkPage() {
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleExportCsv}
-                  className="px-3.5 py-2 saas-btn-secondary text-xs rounded-xl flex items-center gap-1.5 transition-all"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Export CSV</span>
-                </button>
-                <button
                   onClick={handleRerunTestBatch}
                   disabled={isRunningBatch}
                   className="px-4 py-2 saas-btn-primary text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-md disabled:opacity-50"
@@ -134,13 +135,7 @@ export default function BenchmarkPage() {
             <KpiCards kpis={data.kpis} system={data.system} />
             <ChartsSection latencyData={data.latency_profile} fidData={data.fid_curve} />
             <QualitativeSection cards={data.qualitative_comparison} />
-            <FineTunedComparisonSection />
-            <CheckpointsTable checkpoints={data.checkpoints} onInspect={setInspectedCheckpoint} />
             <BenchmarkHistorySection />
-
-            {inspectedCheckpoint && (
-              <InspectModal checkpoint={inspectedCheckpoint} onClose={() => setInspectedCheckpoint(null)} />
-            )}
           </div>
         </main>
       </div>

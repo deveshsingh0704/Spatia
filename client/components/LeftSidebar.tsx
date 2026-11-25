@@ -188,21 +188,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ activeTab }) => {
                     }`}
                   >
                     <span className="truncate">{item.label}</span>
-                    {item.badge && (
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-                        style={
-                          isActive
-                            ? { background: "rgba(0,0,0,0.16)", color: "inherit" }
-                            : {
-                                background: "var(--brand-secondary-soft)",
-                                color: "var(--brand-secondary)"
-                              }
-                        }
-                      >
-                        {item.badge}
-                      </span>
-                    )}
+                    
                   </div>
                 </button>
               );

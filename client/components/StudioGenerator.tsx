@@ -182,7 +182,11 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   // Benchmark States
   const [benchSamplers, setBenchSamplers] = useState<string[]>(["DDIM", "DDPM"]);
   const [benchSteps, setBenchSteps] = useState<number[]>([10, 20, 30, 50]);
-  const [benchSeed] = useState<number>(42);
+  const [benchSeed, setBenchSeed] = useState<number>(42);
+  const [benchGuidance, setBenchGuidance] = useState<number>(7.5);
+  const [customStepInput, setCustomStepInput] = useState<string>("");
+  const [benchResults, setBenchResults] = useState<Array<{ sampler: string; steps: number; latency: number; fid: number; image_url?: string | null }>>([]);
+  const [benchPreviewImage, setBenchPreviewImage] = useState<{ url: string; title: string } | null>(null);
   const [isBenchmarking, setIsBenchmarking] = useState(false);
   const [benchLiveMsg, setBenchLiveMsg] = useState<string>("");
   const [benchGraphData, setBenchGraphData] = useState<BenchmarkGraphPoint[]>([
@@ -318,6 +322,29 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       const isNew = sp.get("new") === "1";
       const urlChatId = sp.get("chat");
       const urlGenId = sp.get("gen");
+      const urlBenchId = sp.get("bench");
+
+      if (urlBenchId) {
+        setActiveSubTab("benchmark");
+        void (async () => {
+          try {
+            const res = await fetchWithAuth(apiUrl(`/api/benchmark/batch/${encodeURIComponent(urlBenchId)}`));
+            if (res.ok) {
+              const data = await res.json();
+              if (data.graph_data) setBenchGraphData(data.graph_data);
+              if (Array.isArray(data.results)) setBenchResults(data.results);
+              if (data.prompt) setPromptInput(data.prompt);
+              if (data.seed !== undefined) setBenchSeed(data.seed);
+              if (Array.isArray(data.samplers) && data.samplers.length > 0) setBenchSamplers(data.samplers);
+              if (Array.isArray(data.steps_list) && data.steps_list.length > 0) setBenchSteps(data.steps_list);
+              setBenchLiveMsg(`Loaded benchmark run ${data.batch_id}`);
+            }
+          } catch (e) {
+            console.warn("Could not load benchmark run:", e);
+          }
+        })();
+        return;
+      }
 
       if (isNew) {
         if (activeChatStorageKey) localStorage.removeItem(activeChatStorageKey);
@@ -698,14 +725,19 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
           model_name: model,
           prompt: promptInput,
           negative_prompt: negativeTags.join(", "),
-          seed: benchSeed
+          seed: benchSeed,
+          guidance_scale: benchGuidance
         })
       });
       const totalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
       if (res.ok) {
         const data = await res.json();
         if (data.graph_data?.length > 0) setBenchGraphData(data.graph_data);
-        setBenchLiveMsg(`Matrix benchmark completed in ${totalElapsed}s`);
+        if (Array.isArray(data.results)) setBenchResults(data.results);
+        if (data.batch_id && typeof window !== "undefined") {
+          window.history.replaceState(null, "", `/studio?bench=${encodeURIComponent(data.batch_id)}`);
+        }
+        setBenchLiveMsg(`Benchmark ${data.batch_id || jobId} saved (${totalElapsed}s)`);
       }
     } catch {
       setBenchLiveMsg("Benchmark sweep failed.");
@@ -1134,15 +1166,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
               )}
               {!isRestoringChat && chatMessages.length === 0 && (
                 <div className="min-h-full flex flex-col items-center justify-center text-center max-w-3xl mx-auto space-y-6 py-8">
-                  <div
-                    className="w-14 h-14 rounded-2xl flex items-center justify-center"
-                    style={{
-                      background: "var(--brand-accent-soft)",
-                      color: "var(--brand-accent)"
-                    }}
-                  >
-                    <Sparkles className="w-7 h-7" />
-                  </div>
+                 
                   <div className="space-y-2 max-w-xl">
                     <h2 className="text-xl font-bold text-[var(--foreground)]">
                       LatentCraft Chat Studio
@@ -1643,6 +1667,36 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
               </div>
             </div>
           )}
+          {benchPreviewImage && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+              onClick={() => setBenchPreviewImage(null)}
+            >
+              <div
+                className="saas-card max-w-xl w-full p-4 space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-mono font-semibold text-[var(--foreground)]">
+                    {benchPreviewImage.title}
+                  </span>
+                  <button
+                    onClick={() => setBenchPreviewImage(null)}
+                    className="p-1.5 rounded-lg saas-btn-secondary"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="rounded-xl overflow-hidden bg-black/30">
+                  <img
+                    src={benchPreviewImage.url}
+                    alt={benchPreviewImage.title}
+                    className="w-full h-auto max-h-[70vh] object-contain"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1710,25 +1764,104 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
                 <label className="text-[11px] text-[var(--muted-foreground)] uppercase block mb-1.5 font-semibold">
                   Step Checkpoints
                 </label>
-                <div className="flex gap-2">
-                  {[10, 20, 30, 50].map((v) => (
+                <div className="flex flex-wrap items-center gap-2">
+                  {Array.from(new Set([10, 20, 30, 50, 75, 100, ...benchSteps]))
+                    .sort((a, b) => a - b)
+                    .map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => toggleStep(v)}
+                        style={
+                          benchSteps.includes(v)
+                            ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
+                            : undefined
+                        }
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                          benchSteps.includes(v)
+                            ? "font-semibold"
+                            : "bg-[var(--surface-overlay)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        }`}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={customStepInput}
+                      onChange={(e) => setCustomStepInput(e.target.value)}
+                      placeholder="Custom..."
+                      className="w-20 px-2.5 py-1.5 rounded-xl bg-[var(--surface-overlay)] text-xs text-[var(--foreground)] font-mono outline-none"
+                    />
                     <button
-                      key={v}
-                      onClick={() => toggleStep(v)}
-                      style={
-                        benchSteps.includes(v)
-                          ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
-                          : undefined
-                      }
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
-                        benchSteps.includes(v)
-                          ? "font-semibold"
-                          : "bg-[var(--surface-overlay)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                      }`}
+                      type="button"
+                      onClick={() => {
+                        const val = parseInt(customStepInput, 10);
+                        if (!isNaN(val) && val >= 1 && val <= 1000 && !benchSteps.includes(val)) {
+                          setBenchSteps([...benchSteps, val].sort((a, b) => a - b));
+                          setCustomStepInput("");
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl saas-btn-secondary text-xs font-medium cursor-pointer"
                     >
-                      {v}
+                      + Add
                     </button>
-                  ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2">
+              <div className="md:col-span-6">
+                <label className="text-[11px] text-[var(--muted-foreground)] uppercase block mb-1.5 font-semibold">
+                  Sweep Prompt
+                </label>
+                <input
+                  type="text"
+                  value={promptInput}
+                  onChange={(e) => setPromptInput(e.target.value)}
+                  placeholder="Enter prompt for sampler matrix..."
+                  className="w-full px-3.5 py-2 rounded-xl bg-[var(--surface-overlay)] text-xs text-[var(--foreground)] outline-none"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] text-[var(--muted-foreground)] uppercase font-semibold">
+                    Guidance Scale
+                  </label>
+                  <span className="text-xs font-mono text-[var(--foreground)]">{benchGuidance.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={0.5}
+                  value={benchGuidance}
+                  onChange={(e) => setBenchGuidance(parseFloat(e.target.value))}
+                  className="w-full accent-[var(--brand-accent)] cursor-pointer mt-1.5"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="text-[11px] text-[var(--muted-foreground)] uppercase block mb-1.5 font-semibold">
+                  RNG Seed
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={benchSeed}
+                    onChange={(e) => setBenchSeed(Number(e.target.value) || 0)}
+                    className="flex-1 px-3.5 py-2 rounded-xl bg-[var(--surface-overlay)] text-xs text-[var(--foreground)] font-mono outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setBenchSeed(Math.floor(Math.random() * 1000000))}
+                    className="p-2 rounded-xl saas-btn-secondary flex items-center justify-center cursor-pointer"
+                    title="Randomize RNG Seed"
+                  >
+                    <Dice5 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -1800,6 +1933,81 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
               </div>
             </div>
           </div>
+
+          {benchResults.some((r) => r.image_url) && (
+            <div className="saas-card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-[var(--foreground)] uppercase tracking-wider">
+                  All Generated Images ({benchResults.filter((r) => r.image_url).length})
+                </h4>
+                <span className="text-[11px] font-mono text-[var(--muted-foreground)]">
+                  Seed: {benchSeed}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {benchResults
+                  .filter((r) => r.image_url)
+                  .map((r, idx) => (
+                    <div
+                      key={`${r.sampler}-${r.steps}-${idx}`}
+                      className="rounded-xl overflow-hidden bg-[var(--surface-overlay)] flex flex-col"
+                    >
+                      <div
+                        className="relative aspect-square w-full bg-black/20 cursor-pointer group"
+                        onClick={() =>
+                          setBenchPreviewImage({
+                            url: resolveMediaUrl(r.image_url!) || "",
+                            title: `${r.sampler} • ${r.steps} steps (Seed ${benchSeed})`,
+                          })
+                        }
+                      >
+                        <img
+                          src={resolveMediaUrl(r.image_url!)}
+                          alt={`${r.sampler} ${r.steps} steps`}
+                          className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
+                        />
+                      </div>
+                      <div className="p-3 flex items-center justify-between text-[11px] font-mono">
+                        <span className="font-semibold text-[var(--foreground)]">
+                          {r.sampler} • {r.steps}s
+                        </span>
+                        <span className="text-emerald-400">{r.latency}s</span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+          {benchPreviewImage && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+              onClick={() => setBenchPreviewImage(null)}
+            >
+              <div
+                className="saas-card max-w-xl w-full p-4 space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-mono font-semibold text-[var(--foreground)]">
+                    {benchPreviewImage.title}
+                  </span>
+                  <button
+                    onClick={() => setBenchPreviewImage(null)}
+                    className="p-1.5 rounded-lg saas-btn-secondary"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="rounded-xl overflow-hidden bg-black/30">
+                  <img
+                    src={benchPreviewImage.url}
+                    alt={benchPreviewImage.title}
+                    className="w-full h-auto max-h-[70vh] object-contain"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

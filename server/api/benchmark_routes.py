@@ -1,13 +1,11 @@
 import os
 import time
-import math
-import asyncio
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, asc, delete
+from sqlalchemy import select, desc, asc, delete
 try:
     import torch
     TORCH_AVAILABLE = True
@@ -15,9 +13,12 @@ except ImportError:
     torch = None  # type: ignore
     TORCH_AVAILABLE = False
 
-from models.user import get_db, AsyncSessionLocal
+from models.user import User, get_db, AsyncSessionLocal
 from models.benchmark import BenchmarkRun
+from api.deps import get_current_user
+from services.storage import get_storage_service
 import psutil
+
 
 def get_live_hardware_telemetry() -> Dict[str, Any]:
     """Dynamically queries active GPU, VRAM, and host RAM."""
@@ -35,7 +36,7 @@ def get_live_hardware_telemetry() -> Dict[str, Any]:
         allocated_vram_gb = round(torch.cuda.memory_allocated(0) / (1024**3), 2)
         vram_pct = int(min(100, (allocated_vram_gb / max(0.1, total_vram_gb)) * 100))
         return {
-            "node": "LOCAL-NODE-RTX4050",
+            "node": "LOCAL-NODE-GPU",
             "device_name": f"{gpu_name} ({vram_pct}% VRAM Active)",
             "vram_total_gb": total_vram_gb,
             "vram_ready_percent": max(5, vram_pct),
@@ -43,67 +44,22 @@ def get_live_hardware_telemetry() -> Dict[str, Any]:
             "ram_total_gb": total_ram_gb,
             "ram_used_gb": used_ram_gb,
             "ram_usage_pct": ram_usage_pct,
-            "cuda_available": True
+            "cuda_available": True,
         }
-    else:
-        return {
-            "node": "LOCAL-NODE-CPU",
-            "device_name": "Host CPU Execution (CUDA Disabled)",
-            "vram_total_gb": 0.0,
-            "vram_ready_percent": 0,
-            "vram_used_gb": 0.0,
-            "ram_total_gb": total_ram_gb,
-            "ram_used_gb": used_ram_gb,
-            "ram_usage_pct": ram_usage_pct,
-            "cuda_available": False
-        }
+    return {
+        "node": "LOCAL-NODE-CPU",
+        "device_name": "Host CPU Execution (CUDA Disabled)",
+        "vram_total_gb": 0.0,
+        "vram_ready_percent": 0,
+        "vram_used_gb": 0.0,
+        "ram_total_gb": total_ram_gb,
+        "ram_used_gb": used_ram_gb,
+        "ram_usage_pct": ram_usage_pct,
+        "cuda_available": False,
+    }
+
 
 router = APIRouter(prefix="/api/benchmark", tags=["Benchmark Lab"])
-
-# Default baseline runs if DB is empty
-BASELINE_SEED_DATA = [
-    # DDIM Trajectory
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDIM", "steps": 10, "latency_sec": 0.58, "fid_score": 11.40, "seed": 42, "image_url": "/benchmark-samples/ddim_50_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDIM", "steps": 25, "latency_sec": 1.42, "fid_score": 6.70, "seed": 42, "image_url": "/benchmark-samples/ddim_50_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDIM", "steps": 50, "latency_sec": 2.84, "fid_score": 4.82, "seed": 42, "image_url": "/benchmark-samples/ddim_50_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDIM", "steps": 100, "latency_sec": 5.68, "fid_score": 3.85, "seed": 42, "image_url": "/benchmark-samples/ddim_50_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDIM", "steps": 250, "latency_sec": 7.15, "fid_score": 3.42, "seed": 42, "image_url": "/benchmark-samples/ddim_50_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDIM", "steps": 1000, "latency_sec": 28.60, "fid_score": 3.17, "seed": 42, "image_url": "/benchmark-samples/ddpm_1000_steps.png"},
-
-    # DDPM Trajectory
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDPM", "steps": 10, "latency_sec": 0.62, "fid_score": 16.00, "seed": 42, "image_url": "/benchmark-samples/ddpm_100_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDPM", "steps": 25, "latency_sec": 1.54, "fid_score": 12.80, "seed": 42, "image_url": "/benchmark-samples/ddpm_100_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDPM", "steps": 50, "latency_sec": 3.10, "fid_score": 9.40, "seed": 42, "image_url": "/benchmark-samples/ddpm_100_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDPM", "steps": 100, "latency_sec": 6.20, "fid_score": 6.20, "seed": 42, "image_url": "/benchmark-samples/ddpm_100_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDPM", "steps": 250, "latency_sec": 15.50, "fid_score": 4.50, "seed": 42, "image_url": "/benchmark-samples/ddpm_1000_steps.png"},
-    {"model_name": "Stable Diffusion v1.5 (Fine-Tuned)", "sampler_name": "DDPM", "steps": 1000, "latency_sec": 28.60, "fid_score": 3.17, "seed": 42, "image_url": "/benchmark-samples/ddpm_1000_steps.png"},
-]
-
-async def seed_initial_benchmarks_if_needed(session: AsyncSession):
-    count = await session.scalar(select(func.count(BenchmarkRun.id)))
-    if count == 0:
-        batch_id = "initial_baseline_batch"
-        dev = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-        for item in BASELINE_SEED_DATA:
-            t_ips = round(1.0 / max(0.001, item["latency_sec"]), 2)
-            run = BenchmarkRun(
-                batch_id=batch_id,
-                model_name=item["model_name"],
-                sampler_name=item["sampler_name"],
-                steps=item["steps"],
-                latency_sec=item["latency_sec"],
-                throughput_ips=t_ips,
-                fid_score=item["fid_score"],
-                seed=item["seed"],
-                prompt="A modern minimalist bedroom interior with wooden flooring, warm ambient lighting, large windows, elegant furniture",
-                image_url=item["image_url"],
-                peak_vram_mb=5120.0,
-                device_name=dev,
-                status="COMPLETED"
-            )
-            session.add(run)
-        await session.commit()
-        print("[Benchmark DB] Seeded initial baseline benchmark data successfully.")
 
 
 class RunBenchmarkRequest(BaseModel):
@@ -115,176 +71,155 @@ class RunBenchmarkRequest(BaseModel):
 
 @router.get("")
 async def get_benchmark_dashboard(
-    model: Optional[str] = Query("Stable Diffusion v1.5 (Fine-Tuned)"),
-    db: AsyncSession = Depends(get_db)
+    model: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns dynamically computed KPIs, convergence curves, and hardware specs from PostgreSQL.
-    """
-    await seed_initial_benchmarks_if_needed(db)
+    """Returns real KPIs, convergence curves, and hardware specs from PostgreSQL for the current user."""
     hw = get_live_hardware_telemetry()
+    storage = get_storage_service()
 
-    # Query all completed benchmark runs for this model (or all models if no match)
+    # Clean up any legacy seeded fake rows once
+    await db.execute(delete(BenchmarkRun).where(BenchmarkRun.batch_id == "initial_baseline_batch"))
+    await db.commit()
+
     stmt = (
         select(BenchmarkRun)
-        .filter(BenchmarkRun.status == "COMPLETED")
-        .order_by(BenchmarkRun.steps.asc(), BenchmarkRun.created_at.desc())
+        .filter(
+            BenchmarkRun.status == "COMPLETED",
+            BenchmarkRun.batch_id != "initial_baseline_batch",
+            BenchmarkRun.user_id == current_user.id,
+        )
+        .order_by(desc(BenchmarkRun.created_at))
+        .limit(100)
     )
-    result = await db.execute(stmt)
-    all_runs = result.scalars().all()
+    all_runs = (await db.execute(stmt)).scalars().all()
+    model_runs = [r for r in all_runs if not model or r.model_name == model] or all_runs
 
-    # Filter by model if available, else fallback to full set
-    model_runs = [r for r in all_runs if r.model_name == model] or all_runs
+    pytorch_ver = f"PyTorch {torch.__version__}" if TORCH_AVAILABLE and torch is not None else "Serverless Worker"
+    system_payload = {
+        "node": hw["node"],
+        "device_name": hw["device_name"],
+        "vram_total_gb": hw["vram_total_gb"],
+        "vram_ready_percent": hw["vram_ready_percent"],
+        "vram_used_gb": hw["vram_used_gb"],
+        "pytorch_version": pytorch_ver,
+        "prd_spec": "REAL-TIME TELEMETRY",
+    }
 
-    # Build FID curve and Latency profile grouped by step
+    if not model_runs:
+        return {
+            "system": system_payload,
+            "kpis": {
+                "optimal_operating_point": "No runs yet",
+                "time_saved_percent": 0.0,
+                "tradeoff": "Run a Sampler Matrix sweep to measure",
+                "fid_score": 0.0,
+                "fid_target": 5.0,
+                "fid_delta_from_baseline": 0.0,
+                "perceptual_quality_index": 0.0,
+                "speedup": "0x",
+                "wall_clock_time_sec": 0.0,
+                "baseline_time_sec": 0.0,
+                "compute_cost": "$0.00",
+                "dataset": "0 Real Runs",
+                "features_count": "Run a sweep in Studio",
+                "eval_eta": 0.00,
+            },
+            "fid_curve": [],
+            "latency_profile": [],
+            "qualitative_comparison": [],
+            "checkpoints": [],
+        }
+
     step_groups: Dict[int, Dict[str, Any]] = {}
     for r in model_runs:
         s = r.steps
         if s not in step_groups:
             step_groups[s] = {"steps": s, "ddim_fid": None, "ddpm_fid": None, "ddim_latency": None, "ddpm_latency": None}
-        
         if "DDIM" in r.sampler_name.upper():
-            step_groups[s]["ddim_fid"] = r.fid_score
-            step_groups[s]["ddim_latency"] = r.latency_sec
+            if step_groups[s]["ddim_fid"] is None:
+                step_groups[s]["ddim_fid"] = r.fid_score
+            if step_groups[s]["ddim_latency"] is None:
+                step_groups[s]["ddim_latency"] = r.latency_sec
         elif "DDPM" in r.sampler_name.upper():
-            step_groups[s]["ddpm_fid"] = r.fid_score
-            step_groups[s]["ddpm_latency"] = r.latency_sec
+            if step_groups[s]["ddpm_fid"] is None:
+                step_groups[s]["ddpm_fid"] = r.fid_score
+            if step_groups[s]["ddpm_latency"] is None:
+                step_groups[s]["ddpm_latency"] = r.latency_sec
 
-    # Form sorted lists
     sorted_steps = sorted(step_groups.keys())
     fid_curve = []
     latency_profile = []
+    max_lat = max((r.latency_sec for r in model_runs), default=1.0)
 
-    baseline_latency = 28.60 # default fallback
     for s in sorted_steps:
         data = step_groups[s]
-        # interpolate or fill
-        d_fid = data["ddim_fid"] or (data["ddpm_fid"] - 2.5 if data["ddpm_fid"] else 5.0)
-        p_fid = data["ddpm_fid"] or (data["ddim_fid"] + 2.5 if data["ddim_fid"] else 8.0)
-        
-        is_opt = (s == 50)
-        lbl = f"OPTIMAL: 50 STEPS (FID: {d_fid:.2f} | Latency: {data.get('ddim_latency', 2.84):.2f}s)" if is_opt else None
-
+        d_fid = data["ddim_fid"]
+        p_fid = data["ddpm_fid"]
         fid_curve.append({
             "steps": s,
-            "ddim_fid": round(d_fid, 2),
-            "ddpm_fid": round(p_fid, 2),
-            "optimal": is_opt,
-            "label": lbl
+            "ddim_fid": round(d_fid, 2) if d_fid is not None else None,
+            "ddpm_fid": round(p_fid, 2) if p_fid is not None else None,
+            "optimal": s == 50,
+            "label": f"{s} Steps",
         })
 
-        lat = data["ddim_latency"] or (round(s * 0.057, 2))
-        speedup = f"{max(1.0, round(28.60 / max(0.1, lat), 1))}x"
+        lat = data["ddim_latency"] if data["ddim_latency"] is not None else (data["ddpm_latency"] or 0.0)
+        speedup = f"{round(max_lat / max(0.01, lat), 1)}x"
         latency_profile.append({
             "steps": s,
-            "latency": lat,
-            "label": f"{s} Steps" if s != 50 else "50 (Opt)",
+            "latency": round(lat, 2),
+            "label": f"{s} Steps",
             "speedup": speedup,
-            "highlight": is_opt,
-            "baseline": (s == 1000)
+            "highlight": s == 50,
+            "baseline": lat == max_lat,
         })
 
-    # Find optimal operating point and KPIs
-    opt_latency = step_groups.get(50, {}).get("ddim_latency", 2.84) or 2.84
-    opt_fid = step_groups.get(50, {}).get("ddim_fid", 4.82) or 4.82
-    baseline_time = step_groups.get(1000, {}).get("ddpm_latency", 28.60) or 28.60
-    speedup_ratio = round(baseline_time / max(0.1, opt_latency), 1)
-    time_saved = round((1.0 - (opt_latency / baseline_time)) * 100.0, 1)
+    best_run = min(model_runs, key=lambda r: r.fid_score if r.fid_score is not None else 999.0)
+    worst_lat = max((r.latency_sec for r in model_runs), default=best_run.latency_sec)
+    speedup_ratio = round(worst_lat / max(0.01, best_run.latency_sec), 1)
+    time_saved = round(max(0.0, (1.0 - (best_run.latency_sec / max(0.01, worst_lat))) * 100.0), 1)
 
     kpis = {
-        "optimal_operating_point": "DDIM @ 50",
+        "optimal_operating_point": f"{best_run.sampler_name} @ {best_run.steps}",
         "time_saved_percent": time_saved,
-        "tradeoff": f"A {round(opt_fid - 3.17, 2)} FID for {speedup_ratio}x throughput",
-        "fid_score": opt_fid,
+        "tradeoff": f"Across {len(model_runs)} real benchmark runs",
+        "fid_score": round(best_run.fid_score, 2),
         "fid_target": 5.0,
-        "fid_delta_from_baseline": round(opt_fid - 3.17, 2),
-        "perceptual_quality_index": 94.8,
+        "fid_delta_from_baseline": round(max(r.fid_score for r in model_runs) - best_run.fid_score, 2),
+        "perceptual_quality_index": round(max(0.0, 100.0 - best_run.fid_score), 1),
         "speedup": f"{speedup_ratio}x",
-        "wall_clock_time_sec": opt_latency,
-        "baseline_time_sec": baseline_time,
-        "compute_cost": "$0.00042 / quad output",
-        "dataset": "LSUN Bedrooms Val",
-        "features_count": "50,000 Ref Inception Feats",
-        "eval_eta": 0.00
+        "wall_clock_time_sec": round(best_run.latency_sec, 2),
+        "baseline_time_sec": round(worst_lat, 2),
+        "compute_cost": f"{round(best_run.peak_vram_mb or 0.0, 0)} MB VRAM",
+        "dataset": f"{len(model_runs)} Real Runs",
+        "features_count": f"Batch {best_run.batch_id[:16]}",
+        "eval_eta": 0.00,
     }
 
-    # Generate checkpoints table records from recent database runs
-    checkpoints = []
-    for r in model_runs[:10]:
-        t_ips = r.throughput_ips or round(1.0 / max(0.001, r.latency_sec), 2)
-        stat = "REFERENCE" if (r.steps >= 1000) else ("PASSED" if r.fid_score <= 5.0 else "HIGH NOISE")
-        vram_num = round(r.peak_vram_mb / 1024, 2)
-        checkpoints.append({
-            "id": r.id,
-            "pipeline": f"{r.sampler_name} @ {r.steps} Steps",
-            "pipeline_type": "DDIM" if "DDIM" in r.sampler_name else "DDPM",
-            "steps": r.steps,
-            "fid": float(r.fid_score),
-            "latency": float(r.latency_sec),
-            "throughput": float(t_ips),
-            "vram": float(vram_num),
-            "rng_seed": r.seed,
-            "status": stat,
-            "badge": "OPTIMAL" if (r.steps == 50 and "DDIM" in r.sampler_name) else None,
-            "qualitative_image": r.image_url,
-            "qualitative_title": f"{r.sampler_name} {r.steps} Steps",
-            "qualitative_tag": "OPTIMAL" if (r.steps == 50 and "DDIM" in r.sampler_name) else stat,
-            "qualitative_tag_type": "optimal" if (r.steps == 50 and "DDIM" in r.sampler_name) else ("gold" if stat == "REFERENCE" else "warning"),
-            "qualitative_desc": f"Empirical run on {r.device_name} with seed {r.seed}.",
-            "latency_index": f"{round(28.60 / max(0.1, r.latency_sec), 1)}x Speedup"
+    qualitative = []
+    for r in model_runs[:3]:
+        resolved_img = storage.resolve_url(r.image_url) if r.image_url else None
+        qualitative.append({
+            "title": f"{r.sampler_name} {r.steps} Steps",
+            "subtitle": f"Seed {r.seed}",
+            "tag": f"BATCH {r.batch_id[-8:]}",
+            "tag_type": "optimal" if r.id == best_run.id else "gold",
+            "image": resolved_img or "/benchmark-samples/ddim_50_steps.png",
+            "fid": f"{round(r.fid_score, 2)}",
+            "latency": f"{round(r.latency_sec, 2)}s",
+            "description": (r.prompt or "Empirical diffusion benchmark run")[:120],
+            "latency_index": f"{round(r.throughput_ips, 2)} img/s",
         })
 
-    qualitative = [
-        {
-            "title": "DDPM 1000 Steps",
-            "subtitle": "Markov Chain",
-            "tag": "GOLD STANDARD",
-            "tag_type": "gold",
-            "image": "/benchmark-samples/bedroom_ddpm_1000.png",
-            "fid": "3.17",
-            "latency": "28.60s",
-            "description": "Full stochastic schedule on LSUN Bedroom. Maximum perceptual fidelity, sharp geometry, and nuanced lighting.",
-            "latency_index": "1.0x (Baseline)"
-        },
-        {
-            "title": "DDPM 100 Steps",
-            "subtitle": "Severe Underfit",
-            "tag": "TRUNCATED / UNCONVERGED",
-            "tag_type": "warning",
-            "image": "/benchmark-samples/bedroom_ddpm_100.png",
-            "fid": "6.20",
-            "latency": "6.20s",
-            "description": "Insufficient Markovian transitions. Visible geometric collapse and residual noise artifacts in bedroom interior.",
-            "latency_index": "4.6x Faster"
-        },
-        {
-            "title": "DDIM 50 Steps (η=0)",
-            "subtitle": "Deterministic ODE",
-            "tag": "OPTIMAL EFFICIENCY",
-            "tag_type": "optimal",
-            "image": "/benchmark-samples/bedroom_ddim_50.png",
-            "fid": "4.82",
-            "latency": "2.84s",
-            "description": "Optimal operating point. Perceptually indistinguishable from 1000-step baseline with 10.1x speedup on LSUN Bedrooms.",
-            "latency_index": "10.1x Faster"
-        }
-    ]
-
     return {
-        "system": {
-            "node": "LOCAL-NODE-RTX4050",
-            "device_name": hw["device_name"],
-            "vram_total_gb": hw["vram_total_gb"],
-            "vram_ready_percent": hw["vram_ready_percent"],
-            "vram_used_gb": hw["vram_used_gb"],
-            "pytorch_version": f"PyTorch {torch.__version__}",
-            "prd_spec": "PRD §1.3 • §6.5 VALIDATED"
-        },
+        "system": system_payload,
         "kpis": kpis,
         "fid_curve": fid_curve,
         "latency_profile": latency_profile,
         "qualitative_comparison": qualitative,
-        "checkpoints": checkpoints
+        "checkpoints": [],
     }
 
 
@@ -292,23 +227,27 @@ async def get_benchmark_dashboard(
 async def get_benchmark_history(
     model: Optional[str] = Query(None),
     sampler: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db)
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns full chronological audit trail of all benchmark runs from PostgreSQL.
-    """
-    await seed_initial_benchmarks_if_needed(db)
-    query = select(BenchmarkRun).order_by(desc(BenchmarkRun.created_at))
+    """Returns full chronological audit trail of real user benchmark runs from PostgreSQL."""
+    storage = get_storage_service()
+    query = (
+        select(BenchmarkRun)
+        .filter(
+            BenchmarkRun.batch_id != "initial_baseline_batch",
+            BenchmarkRun.user_id == current_user.id,
+        )
+        .order_by(desc(BenchmarkRun.created_at))
+    )
 
     if model:
         query = query.filter(BenchmarkRun.model_name == model)
     if sampler and sampler.upper() != "ALL":
         query = query.filter(BenchmarkRun.sampler_name.ilike(f"%{sampler.strip()}%"))
 
-    query = query.limit(limit)
-    res = await db.execute(query)
-    rows = res.scalars().all()
+    rows = (await db.execute(query.limit(limit))).scalars().all()
 
     formatted = []
     for r in rows:
@@ -318,81 +257,89 @@ async def get_benchmark_history(
             "model": r.model_name,
             "sampler": r.sampler_name,
             "steps": r.steps,
-            "generation_time": r.latency_sec,
-            "throughput": r.throughput_ips,
+            "generation_time": round(r.latency_sec, 2),
+            "throughput": round(r.throughput_ips, 2),
             "seed": r.seed,
-            "fid": r.fid_score,
+            "fid": round(r.fid_score, 2),
             "prompt": r.prompt,
-            "image_url": r.image_url,
+            "image_url": storage.resolve_url(r.image_url) if r.image_url else None,
             "device": r.device_name,
             "status": r.status,
-            "created_at": r.created_at.isoformat() if r.created_at else None
+            "created_at": r.created_at.isoformat() if r.created_at else None,
         })
 
     return {"history": formatted}
 
 
-@router.post("/run")
-async def run_benchmark_sweep(
-    req: RunBenchmarkRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+@router.get("/batch/{batch_id}")
+async def get_benchmark_batch(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Dispatches a real empirical diffusion benchmark sweep on the GPU and stores every run in PostgreSQL.
-    """
-    batch_id = f"batch_{int(time.time() * 1000)}"
-    dev = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-    models_to_test = req.models or ["Stable Diffusion v1.5 (Fine-Tuned)"]
-    samplers_to_test = req.samplers or ["DDIM", "DDPM"]
-    steps_to_test = req.steps_list or [10, 25, 50]
+    """Load a specific benchmark run by batch_id for the current user."""
+    storage = get_storage_service()
+    rows = (
+        await db.execute(
+            select(BenchmarkRun)
+            .filter(
+                BenchmarkRun.batch_id == batch_id,
+                BenchmarkRun.user_id == current_user.id,
+            )
+            .order_by(asc(BenchmarkRun.steps))
+        )
+    ).scalars().all()
 
-    async def execute_sweep():
-        async with AsyncSessionLocal() as session:
-            for m in models_to_test:
-                for s in samplers_to_test:
-                    for st in steps_to_test:
-                        # Simulate or execute actual sample pass
-                        sim_latency = round(st * (0.055 if "DDIM" in s else 0.062), 2)
-                        sim_fid = round(max(3.2, (15.0 - (st * 0.15)) if "DDIM" in s else (18.0 - (st * 0.12))), 2)
-                        t_ips = round(1.0 / max(0.001, sim_latency), 2)
-                        
-                        run = BenchmarkRun(
-                            batch_id=batch_id,
-                            model_name=m,
-                            sampler_name=s,
-                            steps=st,
-                            latency_sec=sim_latency,
-                            throughput_ips=t_ips,
-                            fid_score=sim_fid,
-                            seed=req.seed,
-                            prompt="A modern minimalist bedroom interior with wooden flooring, warm ambient lighting",
-                            image_url="/benchmark-samples/ddim_50_steps.png" if "DDIM" in s else "/benchmark-samples/ddpm_100_steps.png",
-                            peak_vram_mb=5200.0,
-                            device_name=dev,
-                            status="COMPLETED"
-                        )
-                        session.add(run)
-            await session.commit()
-            print(f"[Benchmark DB] Benchmark sweep '{batch_id}' successfully saved to PostgreSQL!")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Benchmark run not found")
 
-    background_tasks.add_task(execute_sweep)
+    results = []
+    steps_map: Dict[int, Dict[str, Any]] = {}
+    for r in rows:
+        img_url = storage.resolve_url(r.image_url) if r.image_url else None
+        results.append({
+            "id": r.id,
+            "sampler": r.sampler_name,
+            "steps": r.steps,
+            "latency": round(r.latency_sec, 2),
+            "fid": round(r.fid_score, 2) if r.fid_score is not None else 0.0,
+            "image_url": img_url,
+        })
+        st = r.steps
+        if st not in steps_map:
+            steps_map[st] = {"steps": st}
+        s_key = "ddim" if "DDIM" in r.sampler_name.upper() else "ddpm"
+        steps_map[st][f"{s_key}_latency"] = round(r.latency_sec, 2)
+        steps_map[st][f"{s_key}_fid"] = round(r.fid_score, 2) if r.fid_score is not None else 0.0
 
+    first = rows[0]
     return {
-        "status": "dispatched",
         "batch_id": batch_id,
-        "message": f"Benchmark sweep dispatched on {dev}. Telemetry will stream directly into PostgreSQL."
+        "model_name": first.model_name,
+        "prompt": first.prompt or "",
+        "seed": first.seed,
+        "samplers": sorted(list({r.sampler_name for r in rows})),
+        "steps_list": sorted(list({r.steps for r in rows})),
+        "results": results,
+        "graph_data": [steps_map[s] for s in sorted(steps_map.keys())],
     }
 
 
 @router.get("/export-csv")
-async def export_benchmark_csv(db: AsyncSession = Depends(get_db)):
-    """
-    Generates a live, RFC-4180 compliant CSV export directly from all PostgreSQL records.
-    """
-    stmt = select(BenchmarkRun).order_by(desc(BenchmarkRun.created_at))
-    res = await db.execute(stmt)
-    runs = res.scalars().all()
+async def export_benchmark_csv(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generates a CSV export directly from the current user's PostgreSQL benchmark records."""
+    stmt = (
+        select(BenchmarkRun)
+        .filter(
+            BenchmarkRun.batch_id != "initial_baseline_batch",
+            BenchmarkRun.user_id == current_user.id,
+        )
+        .order_by(desc(BenchmarkRun.created_at))
+    )
+    runs = (await db.execute(stmt)).scalars().all()
 
     csv_lines = ["id,batch_id,model_name,sampler_name,steps,latency_sec,throughput_ips,fid_score,seed,device_name,created_at"]
     for r in runs:
@@ -403,5 +350,5 @@ async def export_benchmark_csv(db: AsyncSession = Depends(get_db)):
     return PlainTextResponse(
         content="\n".join(csv_lines),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=latentcraft_empirical_benchmarks.csv"}
+        headers={"Content-Disposition": "attachment; filename=latentcraft_empirical_benchmarks.csv"},
     )

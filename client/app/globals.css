@@ -1,90 +1,257 @@
 @import "tailwindcss";
 
 :root {
-  --background: #070b14;
-  --foreground: #f1f5f9;
-  --card-bg: #0f1728;
-  --border-color: #1e293b;
+  color-scheme: dark;
+  /* Typography Scale & Font Pairings */
+  --root-font-size: 18px;
+  --font-heading: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-sans: var(--font-body);
+
+  /* Default Looka Palette: Teal & Tangerine (Dark Mode) */
+  --background: #090C0C;
+  --surface-raised: #111616;
+  --surface-overlay: #181F1F;
+  --surface-elevated: #202A2A;
+  --foreground: #F4F6F6;
+
+  --card: #111616;
+  --card-foreground: #F4F6F6;
+  --card-border: transparent;
+
+  --popover: rgba(20, 24, 24, 0.82);
+  --popover-foreground: #F4F6F6;
+
+  --brand-accent: #80C4B7;
+  --brand-accent-fg: #071815;
+  --brand-accent-soft: rgba(128, 196, 183, 0.18);
+  --brand-secondary: #E3856B;
+  --brand-secondary-fg: #1F0D08;
+  --brand-secondary-soft: rgba(227, 133, 107, 0.18);
+  --brand-tertiary: #EDCBD2;
+  --brand-tertiary-soft: rgba(237, 203, 210, 0.16);
+
+  --primary: var(--brand-accent);
+  --primary-foreground: var(--brand-accent-fg);
+
+  --secondary: #182424;
+  --secondary-foreground: #E2E8E7;
+
+  --muted: #182424;
+  --muted-foreground: #9AA5A3;
+
+  --accent: #213030;
+  --accent-foreground: #FAFAFA;
+
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+
+  --border: rgba(255, 255, 255, 0.04);
+  --input: rgba(255, 255, 255, 0.05);
+  --ring: var(--brand-accent);
+  --code-bg: #0D1414;
+
+  /* Apple Liquid Glass Tokens */
+  --glass-bg: rgba(19, 31, 30, 0.64);
+  --glass-bg-elevated: rgba(19, 31, 30, 0.78);
+  --glass-highlight: rgba(128, 196, 183, 0.14);
+  --glass-shadow: 0 18px 48px -12px rgba(0, 0, 0, 0.55);
+  --surface-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.45);
+
+  --ambient-glow-1: rgba(128, 196, 183, 0.18);
+  --ambient-glow-2: rgba(227, 133, 107, 0.15);
+  --ambient-glow-3: rgba(237, 203, 210, 0.1);
+
+  --radius: 1rem; /* 16px Apple continuous-feel radius */
 }
 
-/* Functional Light Mode Overrides */
+/* Light Mode */
 html.light,
 html.light body {
-  --background: #f8fafc !important;
-  --foreground: #0f172a !important;
-  --card-bg: #ffffff !important;
-  --border-color: #e2e8f0 !important;
-  background-color: #f8fafc !important;
-  color: #0f172a !important;
+  color-scheme: light;
+  --background: #F4F7F6;
+  --surface-raised: #FFFFFF;
+  --surface-overlay: #EAF0EE;
+  --surface-elevated: #DDE6E3;
+  --foreground: #141918;
+
+  --card: #FFFFFF;
+  --card-foreground: #141918;
+  --card-border: transparent;
+
+  --popover: rgba(255, 255, 255, 0.86);
+  --popover-foreground: #141918;
+
+  --secondary: #EAF0EE;
+  --secondary-foreground: #1E2524;
+
+  --muted: #EAF0EE;
+  --muted-foreground: #5C6765;
+
+  --accent: #DDE6E3;
+  --accent-foreground: #141918;
+
+  --border: rgba(0, 0, 0, 0.04);
+  --input: rgba(0, 0, 0, 0.04);
+  --code-bg: #EEF2F1;
+
+  --glass-bg: rgba(255, 255, 255, 0.68);
+  --glass-bg-elevated: rgba(255, 255, 255, 0.84);
+  --glass-highlight: rgba(255, 255, 255, 0.85);
+  --glass-shadow: 0 16px 40px -12px rgba(15, 23, 42, 0.12);
+  --surface-shadow: 0 6px 24px -6px rgba(15, 23, 42, 0.07);
+
+  background-color: var(--background) !important;
+  color: var(--foreground) !important;
 }
 
-html.light header {
-  background-color: #ffffff !important;
-  border-color: #e2e8f0 !important;
-}
-
-html.light header span.text-white,
-html.light h1.text-white,
-html.light h2.text-white,
-html.light h3.text-white,
-html.light h4.text-white {
-  color: #0f172a !important;
-}
-
-html.light .bg-\[\#070b14\] {
-  background-color: #f8fafc !important;
-}
-
-html.light .bg-\[\#0d121d\],
-html.light .bg-\[\#0d1424\],
-html.light .bg-\[\#0b1220\],
-html.light .bg-\[\#0f1728\],
-html.light .bg-\[\#0f172a\],
-html.light .bg-\[\#0f1728\]\/95 {
-  background-color: #ffffff !important;
-}
-
-html.light .bg-\[\#131b2c\],
-html.light .bg-\[\#131b2e\],
-html.light .bg-\[\#131c2e\],
-html.light .bg-\[\#121929\] {
-  background-color: #f1f5f9 !important;
-}
-
-html.light .border-\[\#1f293d\],
-html.light .border-\[\#1e293b\],
-html.light .border-\[\#23324d\],
-html.light .border-\[\#22324f\],
-html.light .border-\[\#1e2a42\] {
-  border-color: #e2e8f0 !important;
-}
-
-html.light .text-slate-100,
-html.light .text-slate-200 {
-  color: #1e293b !important;
-}
-
-html.light .text-slate-300,
-html.light .text-slate-400 {
-  color: #475569 !important;
-}
-
-html.light nav {
-  background-color: #f1f5f9 !important;
-  border-color: #e2e8f0 !important;
-}
-
-html.light select,
-html.light input,
-html.light textarea {
-  background-color: #ffffff !important;
-  border-color: #cbd5e1 !important;
-  color: #0f172a !important;
+html {
+  font-size: var(--root-font-size);
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
+  background-image:
+    radial-gradient(56rem 38rem at 6% -4%, var(--ambient-glow-1), transparent 58%),
+    radial-gradient(50rem 36rem at 96% 102%, var(--ambient-glow-2), transparent 58%),
+    radial-gradient(40rem 30rem at 70% 15%, var(--ambient-glow-3), transparent 55%);
+  background-attachment: fixed;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+h1, h2, h3, h4, h5, h6, .font-heading {
+  font-family: var(--font-heading) !important;
+}
+
+/* Content Layer: Borderless Tonal Surfaces (per Apple Materials HIG) */
+.saas-card,
+.apple-card {
+  background: var(--card);
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: var(--surface-shadow);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+/* Functional Layer: Apple Liquid Glass (for floating sidebars, composer, sheets, popovers) */
+.liquid-glass,
+.apple-sidebar-glass,
+.saas-header {
+  background: var(--glass-bg);
+  backdrop-filter: blur(26px) saturate(160%);
+  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  border: none;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+}
+
+.liquid-glass-elevated {
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(32px) saturate(175%);
+  -webkit-backdrop-filter: blur(32px) saturate(175%);
+  border: none;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+}
+
+.apple-glass {
+  background: rgba(14, 16, 18, 0.62);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+/* Borderless Tonal Inputs & Selects */
+.saas-input {
+  background: var(--input);
+  border: none;
+  color: var(--foreground);
+  border-radius: 0.75rem;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.saas-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--brand-accent);
+}
+
+/* Primary Prominence Action Button (Solid Brand Accent, No Neon AI Glow) */
+.saas-btn-primary {
+  background: var(--brand-accent);
+  color: var(--brand-accent-fg);
+  font-weight: 600;
+  border: none;
+  border-radius: 0.85rem;
+  transition: filter 0.16s ease, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.16s ease;
+}
+
+.saas-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.saas-btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Secondary Borderless Tonal Control */
+.saas-btn-secondary {
+  background: var(--surface-overlay);
+  color: var(--foreground);
+  border: none;
+  border-radius: 0.75rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.saas-btn-secondary:hover:not(:disabled) {
+  background: var(--surface-elevated);
+}
+
+/* Accessibility: Keyboard focus visibility (Apple HIG) */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--brand-accent);
+  outline-offset: 2px;
+}
+
+/* Accessibility: Reduced Transparency & Motion (liquid-glass.md) */
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-glass,
+  .liquid-glass-elevated,
+  .apple-sidebar-glass,
+  .saas-header {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--card);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Subtle Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(161, 161, 170, 0.22);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(161, 161, 170, 0.42);
 }

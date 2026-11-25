@@ -5,7 +5,8 @@
 # --- User & Private Documentation in Base Directory ---
 /*.md
 !/README.md
-
+*.json
+.agents
 # --- Python Environment & Virtual Environments ---
 .venv/
 .venv_gpu/
@@ -23,7 +24,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/

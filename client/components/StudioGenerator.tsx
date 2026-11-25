@@ -6,18 +6,27 @@ import {
   Wand2,
   RefreshCw,
   Sliders,
-  CheckCircle,
   BarChart2,
   Clock,
   Sparkles,
-  Play,
-  Layers,
-  ChevronRight,
-  TrendingDown,
-  HelpCircle,
-  Eye,
-  X
+  Download,
+  Copy,
+  Heart,
+  Maximize2,
+  Check,
+  X,
+  Send,
+  Dice5,
+  Plus,
+  Database,
+  RotateCcw,
+  Trash2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Tag,
+  History
 } from "lucide-react";
+import { GlassSelect } from "@/components/ui/GlassSelect";
 import { SystemInfo } from "@/types/benchmark";
 import {
   ResponsiveContainer,
@@ -26,8 +35,7 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
-  Legend
+  Tooltip
 } from "recharts";
 
 interface StudioGeneratorProps {
@@ -42,294 +50,459 @@ interface BenchmarkGraphPoint {
   ddpm_fid?: number;
 }
 
-export const StudioGenerator: React.FC<StudioGeneratorProps> = ({ system }) => {
-  const [activeSubTab, setActiveSubTab] = useState<"generate" | "benchmark">("generate");
+interface ChatGenerationMessage {
+  localId: string;
+  dbId?: string | null;
+  title?: string;
+  prompt: string;
+  negativeTags: string[];
+  modelName: string;
+  samplerName: string;
+  steps: number;
+  guidanceScale: number;
+  seed: number;
+  resolution: string;
+  imageUrl?: string;
+  latencySec?: number;
+  peakVramMb?: number;
+  isFavorite?: boolean;
+  savedToDb?: boolean;
+  createdAt?: string;
+  status: "generating" | "completed" | "error";
+  errorMsg?: string;
+}
 
-  // Single Generation States (Default prompt & negative prompt)
-  const [prompt, setPrompt] = useState(
-    "A photorealistic architectural interior photograph of a modern luxury master bedroom, king size platform bed, textured cream linen duvet, light oak herringbone hardwood floor, panoramic glass windows, soft morning sunlight, subtle ambient lighting, 8k resolution"
+const DEFAULT_NEGATIVE_TAGS = [
+  "blurry",
+  "grain",
+  "noise",
+  "low quality",
+  "artifacts",
+  "deformed",
+  "distorted",
+  "cartoon",
+  "3d render",
+  "text",
+  "watermark"
+];
+
+const SUGGESTED_NEGATIVE_TAGS = [
+  "overexposed",
+  "oversaturated",
+  "jpeg compression",
+  "bad perspective",
+  "unnatural light",
+  "dollhouse",
+  "bad proportions",
+  "duplicate",
+  "cropped",
+  "out of frame"
+];
+
+const RESOLUTIONS = [
+  { value: "512x512", label: "512 × 512", ratio: "1:1" },
+  { value: "768x512", label: "768 × 512", ratio: "3:2" },
+  { value: "512x768", label: "512 × 768", ratio: "2:3" },
+  { value: "768x768", label: "768 × 768", ratio: "1:1 HD" }
+];
+
+const STARTER_PROMPTS = [
+  "A photorealistic architectural interior photograph of a modern luxury master bedroom, king size platform bed, textured cream linen duvet, light oak herringbone floor, panoramic glass windows, soft morning sunlight, 8k resolution",
+  "Minimalist Scandinavian bedroom suite, warm oak timber ceiling, soft indirect cove lighting, linen drapes, architectural digest photography",
+  "Dark walnut wood cabin bedroom, warm bedside brass sconces, wool throw blanket, floor-to-ceiling forest view window at twilight"
+];
+
+function parseNegativePromptToTags(neg?: string | null): string[] {
+  if (!neg || !neg.trim()) return [];
+  return Array.from(
+    new Set(
+      neg
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean)
+    )
   );
-  const [negativePrompt, setNegativePrompt] = useState(
-    "blurry, grain, noise, low quality, artifacts, jpeg compression, deformed, distorted, bad architecture, weird perspective, unnatural light, cartoon, 3d render, dollhouse, drawing, painting, bad proportions, duplicate, text"
-  );
-  const [model, setModel] = useState("Stable Diffusion v1.5");
+}
+
+export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
+  const [activeSubTab, setActiveSubTab] = useState<"generate" | "benchmark">("generate");
+  const [isTweaksOpen, setIsTweaksOpen] = useState(true);
+
+  // Left-side Custom Tweak Controls
+  const [model, setModel] = useState("Stable Diffusion v1.5 (Fine-Tuned)");
   const [sampler, setSampler] = useState("DDIM");
   const [steps, setSteps] = useState(20);
   const [guidance, setGuidance] = useState(7.5);
   const [seed, setSeed] = useState(42);
   const [resolution, setResolution] = useState("512x512");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Live Stream Progress States
+  // Interactive Negative Prompt Tags
+  const [negativeTags, setNegativeTags] = useState<string[]>(DEFAULT_NEGATIVE_TAGS);
+  const [newNegTag, setNewNegTag] = useState("");
+
+  // Chat Input, Thread & Recent History Picker (on empty screen)
+  const [promptInput, setPromptInput] = useState(STARTER_PROMPTS[0]);
+  const [chatMessages, setChatMessages] = useState<ChatGenerationMessage[]>([]);
+  const [historyItems, setHistoryItems] = useState<ChatGenerationMessage[]>([]);
+  const [showHistoryPicker, setShowHistoryPicker] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Live SSE Progress
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [currentStepProgress, setCurrentStepProgress] = useState<number>(0);
   const [elapsedTime, setElapsedTime] = useState<number>(0.0);
   const [etaTime, setEtaTime] = useState<number>(0.0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Telemetry
-  const [telemetry, setTelemetry] = useState<{
-    latency: number;
-    peakVram: number;
-    sampler: string;
-    steps: number;
-    device: string;
-  }>({
-    latency: 0,
-    peakVram: system.vram_used_gb > 0 ? system.vram_used_gb * 1024 : 2675,
-    sampler: "DDIM (Deterministic η=0)",
-    steps: 20,
-    device: system.device_name
-  });
+  // Lightbox & Copy Feedback
+  const [fullscreenImage, setFullscreenImage] = useState<ChatGenerationMessage | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Benchmark Runner States: Inherits prompt and negative prompt from generator by default
-  const [benchPrompt, setBenchPrompt] = useState(prompt);
-  const [benchNegativePrompt, setBenchNegativePrompt] = useState(negativePrompt);
+  // Benchmark States
   const [benchSamplers, setBenchSamplers] = useState<string[]>(["DDIM", "DDPM"]);
   const [benchSteps, setBenchSteps] = useState<number[]>([10, 20, 30, 50]);
-  const [benchSeed, setBenchSeed] = useState<number>(42);
+  const [benchSeed] = useState<number>(42);
   const [isBenchmarking, setIsBenchmarking] = useState(false);
-
-  // Modal inspection for benchmark image preview
-  const [previewBenchmarkImage, setPreviewBenchmarkImage] = useState<{
-    url: string;
-    sampler: string;
-    steps: number;
-    latency: number;
-    fid: number;
-  } | null>(null);
-
+  const [benchLiveMsg, setBenchLiveMsg] = useState<string>("");
   const [benchGraphData, setBenchGraphData] = useState<BenchmarkGraphPoint[]>([
-    { steps: 10, ddim_latency: 0.58, ddpm_latency: 2.15, ddim_fid: 11.40, ddpm_fid: 16.0 },
-    { steps: 20, ddim_latency: 1.25, ddpm_latency: 3.92, ddim_fid: 7.90, ddpm_fid: 13.4 },
-    { steps: 30, ddim_latency: 1.84, ddpm_latency: 5.67, ddim_fid: 5.80, ddpm_fid: 11.2 },
-    { steps: 50, ddim_latency: 2.84, ddpm_latency: 9.40, ddim_fid: 4.82, ddpm_fid: 9.4 }
+    { steps: 10, ddim_latency: 0.58, ddpm_latency: 2.15, ddim_fid: 11.4, ddpm_fid: 16.0 },
+    { steps: 20, ddim_latency: 1.25, ddpm_latency: 3.92, ddim_fid: 7.9, ddpm_fid: 13.4 },
+    { steps: 30, ddim_latency: 1.84, ddpm_latency: 5.67, ddim_fid: 5.8, ddpm_fid: 11.2 },
+    { steps: 50, ddim_latency: 2.84, ddpm_latency: 9.4, ddim_fid: 4.82, ddpm_fid: 9.4 }
   ]);
-  const [benchResultsList, setBenchResultsList] = useState<any[]>([]);
 
-  // Check for URL query params (e.g. from Gallery "Load in Studio")
+  // Fetch persisted generations for the Right Image History Strip (chat stays empty until clicked or generated)
+  const fetchHistoryStrip = async () => {
+    try {
+      const res = await fetch("http://localhost:8001/api/gallery?page=1&page_size=24&sort_by=created_at_desc");
+      if (res.ok) {
+        const data = await res.json();
+        const items = data.items || [];
+        if (Array.isArray(items)) {
+          const mapped: ChatGenerationMessage[] = items.map((it: {
+            id: string;
+            title?: string;
+            prompt: string;
+            negative_prompt?: string | null;
+            model_name?: string;
+            sampler_name?: string;
+            steps?: number;
+            guidance_scale?: number;
+            seed?: number;
+            resolution?: string;
+            image_url?: string;
+            latency_sec?: number;
+            peak_vram_mb?: number;
+            is_favorite?: boolean;
+            created_at?: string;
+          }) => ({
+            localId: `db_${it.id}`,
+            dbId: it.id,
+            title: it.title,
+            prompt: it.prompt,
+            negativeTags: parseNegativePromptToTags(it.negative_prompt),
+            modelName: it.model_name || "Stable Diffusion v1.5",
+            samplerName: it.sampler_name || "DDIM",
+            steps: it.steps || 20,
+            guidanceScale: it.guidance_scale || 7.5,
+            seed: it.seed ?? 42,
+            resolution: it.resolution || "512x512",
+            imageUrl: it.image_url ? it.image_url.replace(":8000/", ":8001/") : undefined,
+            latencySec: it.latency_sec,
+            peakVramMb: it.peak_vram_mb,
+            isFavorite: Boolean(it.is_favorite),
+            savedToDb: true,
+            createdAt: it.created_at,
+            status: "completed"
+          }));
+          setHistoryItems(mapped);
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load generation history strip:", e);
+    }
+  };
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      void fetchHistoryStrip();
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const handleOpenHistoryInChat = (item: ChatGenerationMessage) => {
+    setShowHistoryPicker(false);
+    setChatMessages((prev) => {
+      if (prev.some((m) => m.localId === item.localId)) {
+        return prev;
+      }
+      return [...prev, item];
+    });
+    requestAnimationFrame(() => {
+      document.getElementById(`msg_${item.localId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
+  // Load URL parameters if redirected from Gallery ("Load into Studio")
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const searchParams = new URLSearchParams(window.location.search);
-      const urlPrompt = searchParams.get("prompt");
-      const urlModel = searchParams.get("model");
-      const urlSampler = searchParams.get("sampler");
-      const urlSteps = searchParams.get("steps");
-      const urlGuidance = searchParams.get("guidance");
-      const urlSeed = searchParams.get("seed");
-
-      if (urlPrompt) setPrompt(urlPrompt);
-      if (urlModel) setModel(urlModel);
-      if (urlSampler) setSampler(urlSampler);
-      if (urlSteps) setSteps(Number(urlSteps));
-      if (urlGuidance) setGuidance(Number(urlGuidance));
-      if (urlSeed) setSeed(Number(urlSeed));
+      const id = requestAnimationFrame(() => {
+        const sp = new URLSearchParams(window.location.search);
+        if (sp.get("prompt")) setPromptInput(sp.get("prompt")!);
+        if (sp.get("model")) setModel(sp.get("model")!);
+        if (sp.get("sampler")) setSampler(sp.get("sampler")!);
+        if (sp.get("steps")) setSteps(Number(sp.get("steps")));
+        if (sp.get("guidance")) setGuidance(Number(sp.get("guidance")));
+        if (sp.get("seed")) setSeed(Number(sp.get("seed")));
+        if (sp.get("resolution")) setResolution(sp.get("resolution")!);
+      });
+      return () => cancelAnimationFrame(id);
     }
   }, []);
 
-  // Keep benchmark inputs synced with generator inputs if user updates them
+  // Auto-scroll to bottom when messages update
   useEffect(() => {
-    setBenchPrompt(prompt);
-  }, [prompt]);
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, isGenerating]);
 
-  useEffect(() => {
-    setBenchNegativePrompt(negativePrompt);
-  }, [negativePrompt]);
-
-  // Toggle Sampler selection for benchmark
-  const toggleSampler = (s: string) => {
-    if (benchSamplers.includes(s)) {
-      if (benchSamplers.length > 1) {
-        setBenchSamplers(benchSamplers.filter((x) => x !== s));
+  // Negative tag management
+  const addNegativeTag = (rawInput: string) => {
+    const candidates = rawInput
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    if (candidates.length === 0) return;
+    setNegativeTags((prev) => {
+      const existing = new Set(prev.map((t) => t.toLowerCase()));
+      const next = [...prev];
+      for (const c of candidates) {
+        if (!existing.has(c)) {
+          existing.add(c);
+          next.push(c);
+        }
       }
-    } else {
-      setBenchSamplers([...benchSamplers, s]);
-    }
+      return next;
+    });
+    setNewNegTag("");
   };
 
-  // Toggle Steps selection for benchmark
-  const toggleStep = (stepVal: number) => {
-    if (benchSteps.includes(stepVal)) {
-      if (benchSteps.length > 1) {
-        setBenchSteps(benchSteps.filter((s) => s !== stepVal).sort((a, b) => a - b));
-      }
-    } else {
-      setBenchSteps([...benchSteps, stepVal].sort((a, b) => a - b));
-    }
+  const removeNegativeTag = (tagToRemove: string) => {
+    setNegativeTags((prev) => prev.filter((t) => t !== tagToRemove));
   };
 
-  // Handle SSE Live Streaming Image Generation
-  const handleGenerate = async () => {
+  // Trigger Generation inside Chat Thread
+  const handleGenerate = async (override?: {
+    prompt?: string;
+    seed?: number;
+  }) => {
+    const activePrompt = (override?.prompt ?? promptInput).trim();
+    if (!activePrompt || isGenerating) return;
+
+    const activeSeed = override?.seed ?? seed;
+    const negPromptStr = negativeTags.join(", ");
+    const localId = `chat_${Date.now()}`;
+    const jobId = `job_${Date.now()}`;
+
+    const pendingMsg: ChatGenerationMessage = {
+      localId,
+      prompt: activePrompt,
+      negativeTags: [...negativeTags],
+      modelName: model,
+      samplerName: sampler,
+      steps,
+      guidanceScale: guidance,
+      seed: activeSeed,
+      resolution,
+      status: "generating"
+    };
+
+    setChatMessages((prev) => [...prev, pendingMsg]);
     setIsGenerating(true);
     setProgressPercent(0);
     setCurrentStepProgress(0);
     setElapsedTime(0.0);
     setEtaTime(0.0);
-    setStatusMessage(`Initializing diffusion pipeline on ${system.device_name}...`);
 
-    const jobId = `job_${Date.now()}`;
     const startTime = performance.now();
-
-    // Client-side stopwatch for live smooth counter
     timerRef.current = setInterval(() => {
-      const runningSec = (performance.now() - startTime) / 1000;
-      setElapsedTime(Number(runningSec.toFixed(1)));
+      setElapsedTime(Number(((performance.now() - startTime) / 1000).toFixed(1)));
     }, 100);
 
-    // 1. Connect to SSE stream endpoint
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource(`http://localhost:8001/api/generate/stream/${jobId}`);
       eventSource.onmessage = (event) => {
         try {
-          const payload = JSON.parse(event.data);
-          if (payload.percent !== undefined) {
-            setProgressPercent(payload.percent);
-          }
-          if (payload.step !== undefined) {
-            setCurrentStepProgress(payload.step);
-          }
-          if (payload.eta_sec !== undefined) {
-            setEtaTime(payload.eta_sec);
-          }
-          if (payload.status === "running") {
-            setStatusMessage(`Denoising step ${payload.step} / ${payload.total_steps} (${payload.percent}%)`);
-          }
-          if (payload.status === "completed" && payload.image_url) {
-            const fixedUrl = payload.image_url.replace(":8000/", ":8001/");
-            setGeneratedImage(fixedUrl);
-          }
-        } catch (e) {
-          console.error("SSE parse error", e);
-        }
+          const p = JSON.parse(event.data);
+          if (p.percent !== undefined) setProgressPercent(p.percent);
+          if (p.step !== undefined) setCurrentStepProgress(p.step);
+          if (p.eta_sec !== undefined) setEtaTime(p.eta_sec);
+        } catch {}
       };
       eventSource.onerror = () => {
-        if (eventSource) {
-          eventSource.close();
-        }
+        if (eventSource) eventSource.close();
       };
-    } catch (e) {
-      console.warn("SSE connection error", e);
-    }
+    } catch {}
 
-    // 2. Dispatch POST /api/generate
     try {
       const res = await fetch(`http://localhost:8001/api/generate?job_id=${jobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt,
-          negative_prompt: negativePrompt,
+          prompt: activePrompt,
+          negative_prompt: negPromptStr,
           model_name: model,
           sampler_name: sampler,
           steps,
           guidance_scale: guidance,
-          seed,
+          seed: activeSeed,
           resolution
         })
       });
 
-      const totalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+      const totalElapsed = Number(((performance.now() - startTime) / 1000).toFixed(2));
 
       if (res.ok) {
         const data = await res.json();
-        if (data.image_url) {
-          const fixedUrl = data.image_url.replace(":8000/", ":8001/");
-          setGeneratedImage(fixedUrl);
-        }
-        setProgressPercent(100);
-        setCurrentStepProgress(steps);
-        setElapsedTime(Number(totalElapsed));
-        setEtaTime(0.0);
-        setTelemetry({
-          latency: data.latency_sec || Number(totalElapsed),
-          peakVram: data.peak_vram_mb || (system.vram_used_gb > 0 ? system.vram_used_gb * 1024 : 2675),
-          sampler: `${data.sampler} (η=0)`,
-          steps: data.steps,
-          device: data.device || system.device_name
-        });
-        setStatusMessage(`Successfully generated via ${data.sampler} in ${totalElapsed}s on ${system.device_name}`);
+        const fixedUrl = data.image_url ? data.image_url.replace(":8000/", ":8001/") : undefined;
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.localId === localId
+              ? {
+                  ...m,
+                  dbId: data.id || null,
+                  title: data.title,
+                  imageUrl: fixedUrl,
+                  latencySec: data.latency_sec || totalElapsed,
+                  peakVramMb: data.peak_vram_mb,
+                  resolution: data.resolution || resolution,
+                  savedToDb: Boolean(data.saved_to_db ?? data.id),
+                  createdAt: data.created_at || new Date().toISOString(),
+                  status: "completed"
+                }
+              : m
+          )
+        );
+        void fetchHistoryStrip();
       } else {
-        const err = await res.json();
-        setStatusMessage(`Server Notice: ${err.detail || "Fallback loaded"}`);
+        const err = await res.json().catch(() => ({}));
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.localId === localId
+              ? { ...m, status: "error", errorMsg: err.detail || "Generation failed" }
+              : m
+          )
+        );
       }
-    } catch (error) {
-      console.warn("Backend connection error:", error);
-      setStatusMessage("Generation request failed. Check server status.");
+    } catch {
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.localId === localId
+            ? { ...m, status: "error", errorMsg: "Could not reach generation server." }
+            : m
+        )
+      );
     } finally {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-      if (eventSource) {
-        eventSource.close();
-      }
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (eventSource) eventSource.close();
       setIsGenerating(false);
+      setProgressPercent(100);
     }
   };
 
-  // Benchmark Runner Live Progress States
-  const [benchProgressPercent, setBenchProgressPercent] = useState<number>(0);
-  const [benchStepProgress, setBenchStepProgress] = useState<number>(0);
-  const [benchTotalSteps, setBenchTotalSteps] = useState<number>(0);
-  const [benchElapsedTime, setBenchElapsedTime] = useState<number>(0.0);
-  const [benchEtaTime, setBenchEtaTime] = useState<number>(0.0);
-  const [benchLiveMsg, setBenchLiveMsg] = useState<string>("");
-  const benchTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const handleToggleFavorite = async (msg: ChatGenerationMessage) => {
+    const nextFav = !msg.isFavorite;
+    setChatMessages((prev) =>
+      prev.map((m) => (m.localId === msg.localId ? { ...m, isFavorite: nextFav } : m))
+    );
+    if (msg.dbId) {
+      try {
+        await fetch(`http://localhost:8001/api/gallery/${msg.dbId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_favorite: nextFav })
+        });
+      } catch {}
+    }
+  };
 
-  // Run Custom Benchmark Matrix with live SSE streaming
+  const handleReuseSettings = (msg: ChatGenerationMessage) => {
+    setPromptInput(msg.prompt);
+    setModel(msg.modelName);
+    setSampler(msg.samplerName);
+    setSteps(msg.steps);
+    setGuidance(msg.guidanceScale);
+    setSeed(msg.seed);
+    setResolution(msg.resolution || "512x512");
+    if (msg.negativeTags.length > 0) {
+      setNegativeTags(msg.negativeTags);
+    }
+  };
+
+  const handleDownload = (msg: ChatGenerationMessage) => {
+    if (!msg.imageUrl) return;
+    const a = document.createElement("a");
+    a.href = msg.imageUrl;
+    a.download = `latentcraft_seed${msg.seed}_${msg.resolution}_${msg.dbId || msg.localId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleCopyPrompt = (msg: ChatGenerationMessage) => {
+    navigator.clipboard?.writeText(msg.prompt);
+    setCopiedId(msg.localId);
+    setTimeout(() => setCopiedId(null), 1800);
+  };
+
+  const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleGenerate();
+    }
+  };
+
+  // Token estimation
+  const words = promptInput.trim() ? promptInput.trim().split(/\s+|[,.-]+/).filter(Boolean).length : 0;
+  const estimatedTokens = Math.round(words * 1.25);
+
+  // Benchmark Matrix toggles & execution
+  const toggleSampler = (s: string) => {
+    if (benchSamplers.includes(s)) {
+      if (benchSamplers.length > 1) setBenchSamplers(benchSamplers.filter((x) => x !== s));
+    } else {
+      setBenchSamplers([...benchSamplers, s]);
+    }
+  };
+
+  const toggleStep = (stepVal: number) => {
+    if (benchSteps.includes(stepVal)) {
+      if (benchSteps.length > 1) setBenchSteps(benchSteps.filter((s) => s !== stepVal).sort((a, b) => a - b));
+    } else {
+      setBenchSteps([...benchSteps, stepVal].sort((a, b) => a - b));
+    }
+  };
+
   const handleRunCustomBenchmark = async () => {
     setIsBenchmarking(true);
-    setBenchProgressPercent(0);
-    setBenchStepProgress(0);
-    setBenchElapsedTime(0.0);
-    setBenchEtaTime(0.0);
-    const estimatedTotal = (benchSamplers.length * benchSteps.reduce((a, b) => a + b, 0));
-    setBenchTotalSteps(estimatedTotal);
-    setBenchLiveMsg(`Initializing benchmark across [${benchSamplers.join(", ")}]...`);
-
+    setBenchLiveMsg(`Running matrix across [${benchSamplers.join(", ")}]...`);
     const jobId = `bench_${Date.now()}`;
     const startTime = performance.now();
 
-    // Local stopwatch for benchmark
-    benchTimerRef.current = setInterval(() => {
-      const runningSec = (performance.now() - startTime) / 1000;
-      setBenchElapsedTime(Number(runningSec.toFixed(1)));
-    }, 100);
-
-    // Connect SSE stream for benchmark progress
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource(`http://localhost:8001/api/generate/stream/${jobId}`);
       eventSource.onmessage = (event) => {
         try {
-          const payload = JSON.parse(event.data);
-          if (payload.percent !== undefined) {
-            setBenchProgressPercent(payload.percent);
-          }
-          if (payload.step !== undefined) {
-            setBenchStepProgress(payload.step);
-          }
-          if (payload.total_steps !== undefined) {
-            setBenchTotalSteps(payload.total_steps);
-          }
-          if (payload.eta_sec !== undefined) {
-            setBenchEtaTime(payload.eta_sec);
-          }
-          if (payload.message) {
-            setBenchLiveMsg(payload.message);
-          }
-        } catch (e) {
-          console.error("Benchmark SSE parse error", e);
-        }
+          const p = JSON.parse(event.data);
+          if (p.message) setBenchLiveMsg(p.message);
+        } catch {}
       };
       eventSource.onerror = () => {
         if (eventSource) eventSource.close();
       };
-    } catch (e) {
-      console.warn("Benchmark SSE connection error", e);
-    }
+    } catch {}
 
     try {
       const res = await fetch(`http://localhost:8001/api/benchmark/run-custom?job_id=${jobId}`, {
@@ -339,801 +512,966 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = ({ system }) => {
           samplers: benchSamplers,
           steps_list: benchSteps,
           model_name: model,
-          prompt: benchPrompt,
-          negative_prompt: benchNegativePrompt,
+          prompt: promptInput,
+          negative_prompt: negativeTags.join(", "),
           seed: benchSeed
         })
       });
-
       const totalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-
       if (res.ok) {
         const data = await res.json();
-        if (data.graph_data && data.graph_data.length > 0) {
-          setBenchGraphData(data.graph_data);
-        }
-        if (data.results) {
-          setBenchResultsList(data.results);
-        }
-        setBenchProgressPercent(100);
-        setBenchElapsedTime(Number(totalElapsed));
-        setBenchEtaTime(0.0);
-        setStatusMessage(`Benchmark completed! Evaluated ${data.results.length} configurations in ${totalElapsed}s.`);
+        if (data.graph_data?.length > 0) setBenchGraphData(data.graph_data);
+        setBenchLiveMsg(`Matrix benchmark completed in ${totalElapsed}s`);
       }
-    } catch (e) {
-      console.warn("Benchmark error", e);
-      setStatusMessage("Failed to execute benchmark run on backend.");
+    } catch {
+      setBenchLiveMsg("Benchmark sweep failed.");
     } finally {
-      if (benchTimerRef.current) clearInterval(benchTimerRef.current);
       if (eventSource) eventSource.close();
       setIsBenchmarking(false);
     }
   };
 
   return (
-    <div className="my-5 space-y-4">
-      {/* Sub-navigation pill between Generator and Custom Benchmark */}
-      <div className="flex items-center justify-between bg-[#0f1728]/95 border border-[#1e293b] rounded-xl px-4 py-2.5">
+    <div className="flex flex-col h-[calc(100vh-24px)] overflow-hidden">
+      {/* Compact Workspace View Switcher (No Top Navbar) */}
+      <div className="flex items-center justify-between gap-3 flex-shrink-0 mb-2.5">
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setActiveSubTab("generate")}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all ${
-              activeSubTab === "generate"
-                ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
-            }`}
-          >
-            <Wand2 className="w-3.5 h-3.5" />
-            <span>Interactive Studio Generator</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab("benchmark")}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all ${
-              activeSubTab === "benchmark"
-                ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
-            }`}
-          >
-            <BarChart2 className="w-3.5 h-3.5" />
-            <span>Run Multi-Step Sampler Benchmark</span>
-          </button>
-        </div>
-
-        <span className="text-[11px] font-mono text-slate-400 hidden sm:inline-block">
-          GPU: <span className="text-sky-400 font-bold">{system.device_name}</span>
-        </span>
-      </div>
-
-      {/* VIEW 1: INTERACTIVE STUDIO GENERATOR */}
-      {activeSubTab === "generate" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          {/* Parameters Panel */}
-          <div className="lg:col-span-5 bg-[#0f1728]/95 border border-[#1e293b] rounded-xl p-5 flex flex-col justify-between space-y-4">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-[#1e293b]">
-                <div className="flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-sky-400" />
-                  <h3 className="text-sm font-bold text-white tracking-tight">
-                    Diffusion Generation Engine
-                  </h3>
-                </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800 font-semibold">
-                  Live {system.device_name}
-                </span>
-              </div>
-
-              {/* Status Alert */}
-              {statusMessage && (
-                <div className="mt-3 px-3 py-2 rounded-lg bg-sky-950/70 border border-sky-800 text-sky-300 text-[11px] font-mono flex items-center gap-2">
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                  <span>{statusMessage}</span>
-                </div>
-              )}
-
-              {/* Prompt with Live Token Estimator & Warning */}
-              <div className="mt-3.5 space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-mono text-slate-300 font-semibold uppercase tracking-wider block">
-                    Prompt
-                  </label>
-                  {(() => {
-                    // Approximate CLIP token count: words + special characters / punctuation split
-                    const words = prompt.trim() ? prompt.trim().split(/\s+|[,.-]+/).filter(Boolean).length : 0;
-                    // CLIP typically consumes ~1.2 to 1.3 tokens per word
-                    const estimatedTokens = Math.round(words * 1.25);
-                    const isExceeded = estimatedTokens > 75;
-                    const isNear = estimatedTokens > 60 && !isExceeded;
-                    return (
-                      <span
-                        className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${
-                          isExceeded
-                            ? "bg-rose-950/80 text-rose-400 border border-rose-800"
-                            : isNear
-                            ? "bg-amber-950/80 text-amber-400 border border-amber-800"
-                            : "bg-[#131b2c] text-slate-400 border border-[#23324d]"
-                        }`}
-                      >
-                        ~{estimatedTokens} / 77 CLIP Tokens
-                      </span>
-                    );
-                  })()}
-                </div>
-                <textarea
-                  rows={3}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  className="w-full bg-[#131b2c] border border-[#23324d] rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-sky-500 transition-colors"
-                />
-                {(() => {
-                  const words = prompt.trim() ? prompt.trim().split(/\s+|[,.-]+/).filter(Boolean).length : 0;
-                  const estimatedTokens = Math.round(words * 1.25);
-                  if (estimatedTokens > 75) {
-                    return (
-                      <p className="text-[10px] font-mono text-rose-400 flex items-center gap-1.5 pt-0.5">
-                        ⚠️ Prompt exceeds CLIP&apos;s 77-token ceiling! Words beyond token 77 will be truncated by Stable Diffusion.
-                      </p>
-                    );
-                  }
-                  return null;
-                })()}
-              </div>
-
-              {/* Negative Prompt */}
-              <div className="mt-3 space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider block">
-                    Negative Prompt
-                  </label>
-                  {(() => {
-                    const words = negativePrompt.trim() ? negativePrompt.trim().split(/\s+|[,.-]+/).filter(Boolean).length : 0;
-                    const estimatedTokens = Math.round(words * 1.25);
-                    const isExceeded = estimatedTokens > 75;
-                    return (
-                      <span
-                        className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${
-                          isExceeded
-                            ? "bg-rose-950/80 text-rose-400 border border-rose-800"
-                            : "bg-[#131b2c] text-slate-400 border border-[#23324d]"
-                        }`}
-                      >
-                        ~{estimatedTokens} / 77 Tokens
-                      </span>
-                    );
-                  })()}
-                </div>
-                <input
-                  type="text"
-                  value={negativePrompt}
-                  onChange={(e) => setNegativePrompt(e.target.value)}
-                  className="w-full bg-[#131b2c] border border-[#23324d] rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-sky-500 transition-colors"
-                />
-              </div>
-
-              {/* Model & Sampler Selection */}
-              <div className="grid grid-cols-2 gap-3 mt-3.5">
-                <div>
-                  <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">
-                    Model Backbone
-                  </label>
-                  <select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="w-full bg-[#131b2c] border border-[#23324d] rounded-md px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
-                  >
-                    <option value="Stable Diffusion v1.5 (Fine-Tuned)">SD 1.5 Fine-Tuned (LSUN Bedroom LoRA)</option>
-                    <option value="Stable Diffusion v1.5">Stable Diffusion v1.5 (Base)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">
-                    Sampler Formulation
-                  </label>
-                  <select
-                    value={sampler}
-                    onChange={(e) => setSampler(e.target.value)}
-                    className="w-full bg-[#131b2c] border border-[#23324d] rounded-md px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
-                  >
-                    <option value="DDIM">DDIM (Custom Mathematical Song et al.)</option>
-                    <option value="DDPM">DDPM Markov Baseline (Ho et al.)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Steps & Guidance Slider */}
-              <div className="space-y-3 mt-4">
-                <div>
-                  <div className="flex justify-between text-[11px] font-mono text-slate-300 mb-1">
-                    <span>Inference Steps: {steps}</span>
-                    <span className="text-sky-400 font-semibold">
-                      {sampler === "DDIM" && steps <= 50 ? "Deterministic ODE" : "Markovian Steps"}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="5"
-                    max="100"
-                    step="5"
-                    value={steps}
-                    onChange={(e) => setSteps(Number(e.target.value))}
-                    className="w-full accent-sky-400 cursor-pointer"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-[11px] font-mono text-slate-300 mb-1">
-                    <span>Guidance Scale (CFG): {guidance}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1.0"
-                    max="15.0"
-                    step="0.5"
-                    value={guidance}
-                    onChange={(e) => setGuidance(Number(e.target.value))}
-                    className="w-full accent-sky-400 cursor-pointer"
-                  />
-                </div>
-              </div>
-
-              {/* Seed & Resolution */}
-              <div className="grid grid-cols-2 gap-3 mt-3">
-                <div>
-                  <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">
-                    Deterministic RNG Seed
-                  </label>
-                  <div className="flex gap-1.5">
-                    <input
-                      type="number"
-                      value={seed}
-                      onChange={(e) => setSeed(Number(e.target.value))}
-                      className="w-full bg-[#131b2c] border border-[#23324d] rounded-md px-2.5 py-1 text-xs text-slate-200 font-mono"
-                    />
-                    <button
-                      onClick={() => setSeed(Math.floor(Math.random() * 100000))}
-                      title="Randomize"
-                      className="px-2 py-1 bg-[#1e293b] text-slate-300 rounded hover:bg-slate-700 text-xs font-mono"
-                    >
-                      🎲
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">
-                    Resolution
-                  </label>
-                  <select
-                    value={resolution}
-                    onChange={(e) => setResolution(e.target.value)}
-                    className="w-full bg-[#131b2c] border border-[#23324d] rounded-md px-2.5 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
-                  >
-                    <option>512x512</option>
-                    <option>768x768</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Generate Button */}
+          {activeSubTab === "generate" && !isTweaksOpen && (
             <button
-              onClick={handleGenerate}
-              disabled={isGenerating}
-              className="w-full py-3 rounded-lg bg-gradient-to-r from-sky-400 to-indigo-600 hover:from-sky-300 hover:to-indigo-500 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-sky-500/20 transition-all disabled:opacity-50"
+              onClick={() => setIsTweaksOpen(true)}
+              title="Show Parameters"
+              className="px-3 py-1.5 rounded-full liquid-glass text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-overlay)] flex items-center gap-1.5 transition-all cursor-pointer"
             >
-              {isGenerating ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Denoising Step {currentStepProgress} / {steps} ({progressPercent}%)...</span>
-                </>
-              ) : (
-                <>
-                  <Wand2 className="w-4 h-4" />
-                  <span>Generate Environment Mockup</span>
-                </>
-              )}
+              <PanelLeftOpen className="w-3.5 h-3.5" />
+              <span>Controls</span>
+            </button>
+          )}
+
+          {/* Segmented Studio / Sampler Matrix Toggle Pill */}
+          <div className="inline-flex items-center p-1 rounded-full liquid-glass">
+            <button
+              onClick={() => setActiveSubTab("generate")}
+              style={
+                activeSubTab === "generate"
+                  ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
+                  : undefined
+              }
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer ${
+                activeSubTab === "generate"
+                  ? "font-semibold"
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              <span>Studio</span>
+            </button>
+            <button
+              onClick={() => setActiveSubTab("benchmark")}
+              style={
+                activeSubTab === "benchmark"
+                  ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
+                  : undefined
+              }
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer ${
+                activeSubTab === "benchmark"
+                  ? "font-semibold"
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              <BarChart2 className="w-3.5 h-3.5" />
+              <span>Sampler Matrix</span>
             </button>
           </div>
+        </div>
 
-          {/* Render Output & Live Streaming Progress Viewport */}
-          <div className="lg:col-span-7 bg-[#0f1728]/95 border border-[#1e293b] rounded-xl p-5 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-[#1e293b]">
-                <h3 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${isGenerating ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
-                  Latent Viewport
-                </h3>
-                <div className="text-[11px] font-mono text-slate-400">
-                  Compute Node: <span className="text-sky-400 font-semibold">{system.device_name}</span>
+        {activeSubTab === "generate" && chatMessages.length > 0 && (
+          <button
+            onClick={() => {
+              setChatMessages([]);
+              setShowHistoryPicker(false);
+            }}
+            title="Clear Chat View"
+            className="px-3 py-1.5 rounded-full liquid-glass text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Clear View</span>
+          </button>
+        )}
+      </div>
+
+      {/* ===== VIEW 1: MODERN CHAT GENERATION APPLICATION ===== */}
+      {activeSubTab === "generate" && (
+        <div className="flex flex-1 min-h-0 gap-4">
+          {/* LEFT SIDE: Borderless Tonal Parameters Inspector */}
+          {isTweaksOpen && (
+            <aside className="w-80 xl:w-[340px] flex-shrink-0 saas-card p-5 overflow-y-auto flex flex-col gap-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-7 h-7 rounded-xl flex items-center justify-center"
+                    style={{
+                      background: "var(--brand-accent-soft)",
+                      color: "var(--brand-accent)"
+                    }}
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--foreground)]">
+                    Parameters
+                  </span>
+                </div>
+                <button
+                  onClick={() => setIsTweaksOpen(false)}
+                  title="Collapse Parameters"
+                  className="p-1.5 rounded-lg text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-overlay)] transition-colors cursor-pointer"
+                >
+                  <PanelLeftClose className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Model Backbone */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] block">
+                  Model
+                </label>
+                <GlassSelect
+                  ariaLabel="Model Backbone"
+                  value={model}
+                  onChange={setModel}
+                  options={[
+                    {
+                      value: "Stable Diffusion v1.5 (Fine-Tuned)",
+                      label: "SD 1.5 Fine-Tuned (Bedroom LoRA)"
+                    },
+                    {
+                      value: "Stable Diffusion v1.5",
+                      label: "Stable Diffusion v1.5 (Base)"
+                    }
+                  ]}
+                />
+              </div>
+
+              {/* Sampler */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] block">
+                  Sampler
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[var(--surface-overlay)]">
+                  {["DDIM", "DDPM"].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setSampler(s)}
+                      style={
+                        sampler === s
+                          ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
+                          : undefined
+                      }
+                      className={`py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        sampler === s
+                          ? "font-semibold"
+                          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* LIVE STREAM PROGRESS BAR & TIME TRACKER */}
-              {isGenerating && (
-                <div className="mt-3 p-3.5 rounded-lg bg-sky-950/60 border border-sky-800/80 font-mono space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-sky-300 font-semibold flex items-center gap-1.5">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-400" />
-                      Live Stream: {progressPercent}% Completed
-                    </span>
-                    <span className="text-slate-300">
-                      Step {currentStepProgress} / {steps}
-                    </span>
-                  </div>
+              {/* Resolution Dropdown (with 768x768) */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] block">
+                  Resolution
+                </label>
+                <GlassSelect
+                  ariaLabel="Output Resolution"
+                  value={resolution}
+                  onChange={setResolution}
+                  buttonClassName="font-mono"
+                  options={RESOLUTIONS.map((resOpt) => ({
+                    value: resOpt.value,
+                    label: `${resOpt.label} (${resOpt.ratio})`
+                  }))}
+                />
+              </div>
 
-                  {/* Progress bar container */}
-                  <div className="w-full h-2.5 rounded-full bg-slate-900 overflow-hidden border border-slate-700">
-                    <div
-                      className="h-full bg-gradient-to-r from-sky-400 via-indigo-500 to-emerald-400 transition-all duration-200"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
+              {/* Inference Steps Slider */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-[var(--foreground)]">Steps</span>
+                  <span
+                    className="px-2 py-0.5 rounded-md font-mono text-xs font-semibold"
+                    style={{
+                      background: "var(--brand-secondary-soft)",
+                      color: "var(--brand-secondary)"
+                    }}
+                  >
+                    {steps}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={steps}
+                  onChange={(e) => setSteps(Number(e.target.value))}
+                  style={{ accentColor: "var(--brand-accent)" }}
+                  className="w-full cursor-pointer"
+                />
+                <div className="flex justify-between text-[11px] text-[var(--muted-foreground)] font-mono">
+                  <span>5 (Draft)</span>
+                  <span>50</span>
+                  <span>100 (HQ)</span>
+                </div>
+              </div>
 
-                  {/* Live Clock & ETA */}
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-sky-400" />
-                      <span>Elapsed: <strong className="text-white">{elapsedTime}s</strong></span>
+              {/* Guidance Scale (CFG) Slider */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-[var(--foreground)]">Guidance Scale (CFG)</span>
+                  <span
+                    className="px-2 py-0.5 rounded-md font-mono text-xs font-semibold"
+                    style={{
+                      background: "var(--brand-secondary-soft)",
+                      color: "var(--brand-secondary)"
+                    }}
+                  >
+                    {guidance.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={1.0}
+                  max={15.0}
+                  step={0.5}
+                  value={guidance}
+                  onChange={(e) => setGuidance(Number(e.target.value))}
+                  style={{ accentColor: "var(--brand-accent)" }}
+                  className="w-full cursor-pointer"
+                />
+                <div className="flex justify-between text-[11px] text-[var(--muted-foreground)] font-mono">
+                  <span>1.0 (Free)</span>
+                  <span>7.5</span>
+                  <span>15.0 (Strict)</span>
+                </div>
+              </div>
+
+              {/* Seed */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] block">
+                  Seed
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={seed}
+                    onChange={(e) => setSeed(Number(e.target.value))}
+                    className="flex-1 saas-input px-3 py-2 text-xs font-mono"
+                  />
+                  <button
+                    onClick={() => setSeed(Math.floor(Math.random() * 100000))}
+                    title="Randomize Seed"
+                    className="px-3 py-2 saas-btn-secondary rounded-xl flex items-center justify-center"
+                  >
+                    <Dice5 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Interactive Negative Prompt Tags */}
+              <div className="space-y-2.5 pt-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5" style={{ color: "var(--brand-tertiary)" }} />
+                    Negative Tags
+                  </label>
+                  <div className="flex items-center gap-2.5 text-[11px]">
+                    <button
+                      onClick={() => setNegativeTags(DEFAULT_NEGATIVE_TAGS)}
+                      style={{ color: "var(--brand-tertiary)" }}
+                      className="hover:underline font-medium"
+                    >
+                      Reset
+                    </button>
+                    {negativeTags.length > 0 && (
+                      <button
+                        onClick={() => setNegativeTags([])}
+                        className="text-rose-400 hover:underline font-medium"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Add New Tag Input */}
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={newNegTag}
+                    onChange={(e) => setNewNegTag(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === ",") {
+                        e.preventDefault();
+                        addNegativeTag(newNegTag);
+                      }
+                    }}
+                    placeholder="Add negative tag..."
+                    className="flex-1 saas-input px-3 py-1.5 text-xs"
+                  />
+                  <button
+                    onClick={() => addNegativeTag(newNegTag)}
+                    disabled={!newNegTag.trim()}
+                    title="Add Tag"
+                    className="px-2.5 py-1.5 saas-btn-secondary rounded-xl disabled:opacity-40"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Active Tags List (Borderless Tonal Pills) */}
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto py-1">
+                  {negativeTags.map((tag) => (
+                    <span
+                      key={tag}
+                      style={{
+                        background: "var(--brand-tertiary-soft)",
+                        color: "var(--brand-tertiary)"
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
+                    >
+                      <span>{tag}</span>
+                      <button
+                        onClick={() => removeNegativeTag(tag)}
+                        className="opacity-75 hover:opacity-100 transition-opacity"
+                        title={`Remove "${tag}"`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {negativeTags.length === 0 && (
+                    <span className="text-xs text-[var(--muted-foreground)] italic">
+                      No negative tags active
+                    </span>
+                  )}
+                </div>
+
+                {/* Quick-Add Suggestions */}
+                {(() => {
+                  const available = SUGGESTED_NEGATIVE_TAGS.filter(
+                    (s) => !negativeTags.some((t) => t.toLowerCase() === s.toLowerCase())
+                  );
+                  if (available.length === 0) return null;
+                  return (
+                    <div className="space-y-1.5 pt-1">
+                      <span className="text-[11px] text-[var(--muted-foreground)] block">
+                        Quick add:
+                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {available.slice(0, 6).map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => addNegativeTag(s)}
+                            className="px-2 py-0.5 rounded-full bg-[var(--surface-overlay)] text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-elevated)] transition-colors"
+                          >
+                            + {s}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div>
-                      {etaTime > 0 ? (
-                        <span>Est. Remaining: <strong className="text-amber-400">{etaTime}s</strong></span>
+                  );
+                })()}
+              </div>
+            </aside>
+          )}
+
+          {/* RIGHT / MAIN CHAT GENERATION WORKSPACE */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 saas-card overflow-hidden relative">
+            {/* Scrollable Chat Thread */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-28 space-y-6">
+              {chatMessages.length === 0 && (
+                <div className="min-h-full flex flex-col items-center justify-center text-center max-w-3xl mx-auto space-y-6 py-8">
+                  <div
+                    className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                    style={{
+                      background: "var(--brand-accent-soft)",
+                      color: "var(--brand-accent)"
+                    }}
+                  >
+                    <Sparkles className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-2 max-w-xl">
+                    <h2 className="text-xl font-bold text-[var(--foreground)]">
+                      LatentCraft Chat Studio
+                    </h2>
+                    <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
+                      Tweak model, steps, CFG scale, resolution (up to 768×768), and negative tags on the left, then describe your scene below or load a previously generated image from history.
+                    </p>
+                  </div>
+
+                  {/* Action Toggle: Load from Recently Generated Images */}
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      onClick={() => setShowHistoryPicker((prev) => !prev)}
+                      style={
+                        showHistoryPicker
+                          ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
+                          : undefined
+                      }
+                      className={`px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
+                        showHistoryPicker ? "" : "saas-btn-secondary"
+                      }`}
+                    >
+                      <History className="w-4 h-4" />
+                      <span>
+                        {showHistoryPicker
+                          ? "Hide Recently Generated Images"
+                          : `Load from Recently Generated Images (${historyItems.length})`}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Expandable Recent History Picker */}
+                  {showHistoryPicker ? (
+                    <div className="w-full space-y-3 text-left p-4 rounded-2xl bg-[var(--surface-overlay)]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-[var(--foreground)] flex items-center gap-1.5">
+                          <History className="w-3.5 h-3.5" style={{ color: "var(--brand-accent)" }} />
+                          Recently Generated Images — Choose to Load in Chat
+                        </span>
+                        <span className="text-xs font-mono text-[var(--muted-foreground)]">
+                          {historyItems.length} saved
+                        </span>
+                      </div>
+
+                      {historyItems.length === 0 ? (
+                        <div className="py-8 text-center text-xs text-[var(--muted-foreground)]">
+                          No previously generated images found yet. Generate your first image below!
+                        </div>
                       ) : (
-                        <span>Finishing latent decode...</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[340px] overflow-y-auto pr-1">
+                          {historyItems.map((item) => (
+                            <button
+                              key={item.localId}
+                              onClick={() => handleOpenHistoryInChat(item)}
+                              className="group rounded-2xl overflow-hidden bg-[var(--card)] hover:scale-[1.02] transition-all text-left flex flex-col shadow-sm"
+                            >
+                              <div className="relative aspect-square w-full bg-zinc-950 overflow-hidden">
+                                {item.imageUrl && (
+                                  <Image
+                                    src={item.imageUrl}
+                                    alt={item.title || "Generated image"}
+                                    fill
+                                    unoptimized
+                                    className="object-cover group-hover:scale-105 transition-transform duration-300"
+                                  />
+                                )}
+                                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full apple-glass text-[10px] font-mono text-white">
+                                  {item.samplerName} • {item.steps}s
+                                </div>
+                              </div>
+                              <div className="p-2.5 space-y-0.5">
+                                <div className="text-xs font-semibold text-[var(--foreground)] truncate">
+                                  {item.title || "Untitled Mockup"}
+                                </div>
+                                <div className="text-[11px] text-[var(--muted-foreground)] line-clamp-1">
+                                  {item.prompt}
+                                </div>
+                                <div className="text-[10px] font-mono" style={{ color: "var(--brand-accent)" }}>
+                                  {item.resolution} • Seed #{item.seed}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="w-full max-w-xl space-y-2 text-left">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] block">
+                        Try a prompt
+                      </span>
+                      <div className="grid grid-cols-1 gap-2">
+                        {STARTER_PROMPTS.map((sp, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setPromptInput(sp)}
+                            className="p-3.5 rounded-2xl bg-[var(--surface-overlay)] hover:bg-[var(--surface-elevated)] text-xs text-[var(--foreground)] text-left transition-all line-clamp-2"
+                          >
+                            {sp}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {chatMessages.map((msg) => (
+                <div key={msg.localId} id={`msg_${msg.localId}`} className="space-y-4">
+                  {/* USER PROMPT BUBBLE */}
+                  <div className="flex justify-end">
+                    <div
+                      className="max-w-2xl rounded-2xl rounded-tr-sm px-4 py-3 space-y-1.5"
+                      style={{
+                        background: "var(--brand-accent)",
+                        color: "var(--brand-accent-fg)"
+                      }}
+                    >
+                      <p className="text-xs sm:text-sm leading-relaxed font-medium">{msg.prompt}</p>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] opacity-85 font-mono pt-1">
+                        <span>{msg.resolution}</span>
+                        <span>•</span>
+                        <span>{msg.samplerName}</span>
+                        <span>•</span>
+                        <span>{msg.steps} steps</span>
+                        <span>•</span>
+                        <span>CFG {msg.guidanceScale}</span>
+                        <span>•</span>
+                        <span>Seed {msg.seed}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ASSISTANT RESPONSE CARD */}
+                  <div className="flex justify-start">
+                    <div className="max-w-3xl w-full rounded-2xl rounded-tl-sm bg-[var(--surface-overlay)] p-4 space-y-3.5">
+                      {msg.status === "generating" && (
+                        <div className="space-y-3 py-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold flex items-center gap-2" style={{ color: "var(--brand-accent)" }}>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              Synthesizing image... {progressPercent}%
+                            </span>
+                            <span className="font-mono text-xs text-[var(--muted-foreground)]">
+                              Step {currentStepProgress} / {msg.steps}
+                            </span>
+                          </div>
+                          <div className="w-full h-2 rounded-full bg-[var(--surface-elevated)] overflow-hidden">
+                            <div
+                              className="h-full transition-all duration-200 rounded-full"
+                              style={{
+                                width: `${progressPercent}%`,
+                                background: "linear-gradient(90deg, var(--brand-accent), var(--brand-secondary))"
+                              }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-[var(--muted-foreground)] font-mono">
+                            <span className="flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5" style={{ color: "var(--brand-secondary)" }} />
+                              Elapsed: {elapsedTime}s
+                            </span>
+                            <span>
+                              {etaTime > 0 ? `Est. Remaining: ${etaTime}s` : "Processing latent tensor..."}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {msg.status === "error" && (
+                        <div className="p-3 rounded-xl bg-rose-500/15 text-xs text-rose-400">
+                          {msg.errorMsg || "Generation failed."}
+                        </div>
+                      )}
+
+                      {msg.status === "completed" && msg.imageUrl && (
+                        <>
+                          {/* Image Viewport */}
+                          <div
+                            onClick={() => setFullscreenImage(msg)}
+                            className="relative w-full max-w-lg aspect-square rounded-2xl overflow-hidden bg-black/35 cursor-zoom-in group"
+                          >
+                            <Image
+                              src={msg.imageUrl}
+                              alt={msg.title || msg.prompt}
+                              fill
+                              unoptimized
+                              className="object-contain group-hover:scale-[1.01] transition-transform duration-300"
+                            />
+                            <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-xl apple-glass text-white">
+                              <Maximize2 className="w-4 h-4" />
+                            </div>
+                          </div>
+
+                          {/* Saved Metadata Block */}
+                          <div className="p-3.5 rounded-2xl bg-[var(--card)] space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  style={{
+                                    background: "var(--brand-secondary-soft)",
+                                    color: "var(--brand-secondary)"
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold"
+                                >
+                                  <Database className="w-3 h-3" />
+                                  {msg.savedToDb ? "Metadata Saved (DB + PNG)" : "Metadata Embedded (PNG)"}
+                                </span>
+                                {msg.dbId && (
+                                  <span className="text-[11px] font-mono text-[var(--muted-foreground)]">
+                                    ID: {msg.dbId.slice(0, 8)}
+                                  </span>
+                                )}
+                              </div>
+                              {msg.title && (
+                                <span className="text-xs font-semibold text-[var(--foreground)] truncate max-w-xs">
+                                  {msg.title}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+                              <div className="p-2.5 rounded-xl bg-[var(--surface-overlay)]">
+                                <span className="text-[10px] uppercase text-[var(--muted-foreground)] block">
+                                  Model
+                                </span>
+                                <span className="text-[var(--foreground)] font-medium truncate block">
+                                  {msg.modelName.replace("Stable Diffusion v1.5", "SD 1.5")}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-[var(--surface-overlay)]">
+                                <span className="text-[10px] uppercase text-[var(--muted-foreground)] block">
+                                  Sampler &amp; Steps
+                                </span>
+                                <span className="text-[var(--foreground)] font-medium">
+                                  {msg.samplerName} • {msg.steps}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-[var(--surface-overlay)]">
+                                <span className="text-[10px] uppercase text-[var(--muted-foreground)] block">
+                                  CFG / Seed
+                                </span>
+                                <span className="text-[var(--foreground)] font-medium">
+                                  {msg.guidanceScale} / #{msg.seed}
+                                </span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-[var(--surface-overlay)]">
+                                <span className="text-[10px] uppercase text-[var(--muted-foreground)] block">
+                                  Size &amp; Time
+                                </span>
+                                <span className="font-semibold" style={{ color: "var(--brand-secondary)" }}>
+                                  {msg.resolution} • {msg.latencySec ? `${msg.latencySec.toFixed(2)}s` : "—"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {msg.negativeTags.length > 0 && (
+                              <div className="text-[11px] text-[var(--muted-foreground)] flex flex-wrap items-center gap-1.5 pt-0.5">
+                                <span className="font-semibold uppercase mr-1">Negative:</span>
+                                {msg.negativeTags.slice(0, 6).map((t) => (
+                                  <span
+                                    key={t}
+                                    style={{
+                                      background: "var(--brand-tertiary-soft)",
+                                      color: "var(--brand-tertiary)"
+                                    }}
+                                    className="px-2 py-0.5 rounded-full font-medium"
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
+                                {msg.negativeTags.length > 6 && (
+                                  <span>+{msg.negativeTags.length - 6} more</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Action Toolbar */}
+                          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                            <button
+                              onClick={() => handleDownload(msg)}
+                              className="px-3 py-1.5 rounded-xl saas-btn-secondary text-xs flex items-center gap-1.5"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Download</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleToggleFavorite(msg)}
+                              className={`px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-colors ${
+                                msg.isFavorite
+                                  ? "bg-rose-500/15 text-rose-400 font-medium"
+                                  : "saas-btn-secondary"
+                              }`}
+                            >
+                              <Heart className={`w-3.5 h-3.5 ${msg.isFavorite ? "fill-rose-500" : ""}`} />
+                              <span>{msg.isFavorite ? "Favorited" : "Favorite"}</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleCopyPrompt(msg)}
+                              className="px-3 py-1.5 rounded-xl saas-btn-secondary text-xs flex items-center gap-1.5"
+                            >
+                              {copiedId === msg.localId ? (
+                                <>
+                                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                                  <span>Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>Copy Prompt</span>
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              onClick={() => handleReuseSettings(msg)}
+                              className="px-3 py-1.5 rounded-xl saas-btn-secondary text-xs flex items-center gap-1.5"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>Use Settings</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                handleReuseSettings(msg);
+                                const nextSeed = Math.floor(Math.random() * 100000);
+                                setSeed(nextSeed);
+                                handleGenerate({ prompt: msg.prompt, seed: nextSeed });
+                              }}
+                              disabled={isGenerating}
+                              className="px-3 py-1.5 rounded-xl saas-btn-secondary text-xs flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Regenerate</span>
+                            </button>
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
                 </div>
-              )}
-
-              {/* Image Viewport: Clean State (No default image until generated) */}
-              <div className="relative aspect-video w-full rounded-lg overflow-hidden border border-[#23324d] bg-[#090d16] my-4 shadow-inner flex items-center justify-center">
-                {generatedImage ? (
-                  <>
-                    <Image
-                      src={generatedImage}
-                      alt="Generated environment"
-                      fill
-                      className="object-cover"
-                      priority
-                      unoptimized
-                    />
-                    <div className="absolute top-3 left-3 px-2 py-0.5 rounded bg-black/80 backdrop-blur-md border border-slate-700 text-[10px] font-mono text-sky-400 font-semibold">
-                      {telemetry.sampler} • {telemetry.steps} Steps
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center p-8 space-y-3">
-                    <div className="w-14 h-14 rounded-2xl bg-sky-950/50 border border-sky-800/60 mx-auto flex items-center justify-center text-sky-400 shadow-lg shadow-sky-950/50">
-                      <Wand2 className="w-7 h-7" />
-                    </div>
-                    <div className="space-y-1">
-                      <h4 className="text-sm font-semibold text-slate-200">
-                        Viewport Ready
-                      </h4>
-                      <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
-                        Configure prompt parameters on the left and click <span className="text-sky-400 font-semibold">&ldquo;Generate Environment Mockup&rdquo;</span> to initiate live diffusion sampling.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
+              ))}
+              <div ref={chatEndRef} />
             </div>
 
-            {/* Telemetry Strip */}
-            <div className="grid grid-cols-3 gap-3 p-3 rounded-lg bg-[#131b2c] border border-[#23324d] text-center font-mono">
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase block">
-                  Execution Latency
-                </span>
-                <span className="text-sm font-bold text-sky-400">
-                  {telemetry.latency > 0 ? `${telemetry.latency}s` : "0.00s"}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase block">
-                  GPU VRAM Allocation
-                </span>
-                <span className="text-sm font-bold text-white">
-                  {telemetry.peakVram ? `${telemetry.peakVram.toFixed(0)} MB` : "N/A"}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase block">
-                  Host System RAM
-                </span>
-                <span className="text-sm font-bold text-emerald-400">
-                  {system.used_ram_gb ? `${system.used_ram_gb} GB` : "Online"}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* VIEW 2: MULTI-STEP SAMPLER BENCHMARK WITH REAL-TIME GRAPH */}
-      {activeSubTab === "benchmark" && (
-        <div className="bg-[#0f1728]/95 border border-[#1e293b] rounded-xl p-5 space-y-5">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-3 border-b border-[#1e293b] gap-2">
-            <div>
-              <h3 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-sky-400" />
-                Multi-Step Sampler Benchmark Suite
-              </h3>
-              <p className="text-[11px] font-mono text-slate-400 mt-0.5">
-                Run comparative experiments across DDIM &amp; DDPM at multiple sampling steps and plot wall-clock latency &amp; FID curves.
-              </p>
-            </div>
-            <span className="text-xs font-mono px-2.5 py-1 rounded bg-[#131b2c] border border-[#23324d] text-sky-400">
-              PRD §1.3 • §6.5 Compliant
-            </span>
-          </div>
-
-          {/* Benchmark Controls with Prompt, Negative Prompt, Samplers & Steps */}
-          <div className="p-4 rounded-xl bg-[#131b2c] border border-[#23324d] space-y-4">
-            {/* Prompt and Negative Prompt Inputs */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-[11px] font-mono text-slate-300 font-semibold uppercase tracking-wider block mb-1">
-                  Benchmark Prompt
-                </label>
-                <textarea
-                  rows={2}
-                  value={benchPrompt}
-                  onChange={(e) => setBenchPrompt(e.target.value)}
-                  className="w-full bg-[#0a0f1a] border border-[#1e293b] rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-sky-500 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-mono text-slate-400 uppercase tracking-wider block mb-1">
-                  Negative Prompt
-                </label>
-                <textarea
-                  rows={2}
-                  value={benchNegativePrompt}
-                  onChange={(e) => setBenchNegativePrompt(e.target.value)}
-                  className="w-full bg-[#0a0f1a] border border-[#1e293b] rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-sky-500 transition-colors"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1">
-              {/* 1. Sampler Selector (Color scheme: DDIM #0099ff cyan/sky, DDPM #6633ff purple/indigo) */}
-              <div className="md:col-span-4">
-                <label className="text-[11px] font-mono text-slate-300 font-semibold uppercase tracking-wider block mb-2">
-                  1. Select Samplers
-                </label>
-                <div className="flex gap-2.5">
-                  <button
-                    onClick={() => toggleSampler("DDIM")}
-                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-mono font-bold border transition-all ${
-                      benchSamplers.includes("DDIM")
-                        ? "bg-[#0099ff] text-slate-950 border-[#0099ff] shadow-md shadow-sky-500/30"
-                        : "bg-slate-900 text-slate-400 border-slate-700 hover:text-white"
+            {/* Floating Apple Liquid Glass Chat Composer */}
+            <div className="absolute bottom-3 left-3 right-3 p-2.5 rounded-2xl liquid-glass-elevated">
+              <div className="flex items-stretch gap-2.5">
+                <div className="flex-1 relative flex">
+                  <textarea
+                    rows={2}
+                    value={promptInput}
+                    onChange={(e) => setPromptInput(e.target.value)}
+                    onKeyDown={handlePromptKeyDown}
+                    placeholder="Describe the architectural or creative scene to generate... (Press Enter to send)"
+                    className="w-full h-[64px] saas-input px-4 py-2.5 pr-32 text-xs sm:text-sm resize-none leading-relaxed rounded-xl"
+                  />
+                  <span
+                    className={`absolute right-3 bottom-2 text-[10px] font-mono pointer-events-none ${
+                      estimatedTokens > 75
+                        ? "text-rose-400 font-semibold"
+                        : estimatedTokens > 60
+                        ? "text-amber-400"
+                        : "text-[var(--muted-foreground)]"
                     }`}
                   >
-                    DDIM
-                  </button>
-
-                  <button
-                    onClick={() => toggleSampler("DDPM")}
-                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-mono font-bold border transition-all ${
-                      benchSamplers.includes("DDPM")
-                        ? "bg-[#6633ff] text-white border-[#6633ff] shadow-md shadow-indigo-500/30"
-                        : "bg-slate-900 text-slate-400 border-slate-700 hover:text-white"
-                    }`}
-                  >
-                    DDPM
-                  </button>
+                    ~{estimatedTokens} / 77 tokens
+                  </span>
                 </div>
-              </div>
 
-              {/* 2. Step Selection Pills */}
-              <div className="md:col-span-5">
-                <label className="text-[11px] font-mono text-slate-300 font-semibold uppercase tracking-wider block mb-2">
-                  2. Select Step Counts to Benchmark
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {[5, 10, 15, 20, 25, 30, 50, 100].map((stepVal) => {
-                    const active = benchSteps.includes(stepVal);
-                    return (
-                      <button
-                        key={stepVal}
-                        onClick={() => toggleStep(stepVal)}
-                        className={`px-3 py-1.5 rounded-md text-xs font-mono transition-colors border ${
-                          active
-                            ? "bg-sky-950 text-sky-300 border-sky-400 font-bold"
-                            : "bg-slate-900/80 text-slate-400 border-slate-800 hover:border-slate-600"
-                        }`}
-                      >
-                        {stepVal}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 3. Run Button */}
-              <div className="md:col-span-3 flex flex-col justify-end">
                 <button
-                  onClick={handleRunCustomBenchmark}
-                  disabled={isBenchmarking}
-                  className="w-full py-2.5 rounded-lg bg-gradient-to-r from-sky-400 to-indigo-600 hover:from-sky-300 hover:to-indigo-500 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-sky-500/20 disabled:opacity-50"
+                  onClick={() => handleGenerate()}
+                  disabled={isGenerating || !promptInput.trim()}
+                  className="h-[64px] px-5 saas-btn-primary rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 flex-shrink-0 cursor-pointer"
                 >
-                  {isBenchmarking ? (
+                  {isGenerating ? (
                     <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Benchmarking...</span>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span className="text-xs font-mono">{progressPercent}%</span>
                     </>
                   ) : (
                     <>
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>Run Benchmark Matrix</span>
+                      <Send className="w-4 h-4" />
                     </>
                   )}
                 </button>
               </div>
             </div>
+          </div>
 
-            {/* LIVE STREAM PROGRESS BAR & TIME TRACKER FOR BENCHMARK */}
-            {isBenchmarking && (
-              <div className="mt-4 p-4 rounded-xl bg-sky-950/70 border border-sky-800/80 font-mono space-y-2.5 animate-in fade-in">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs gap-1">
-                  <span className="text-sky-300 font-semibold flex items-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin text-sky-400" />
-                    <span>{benchLiveMsg || `Benchmarking in progress (${benchProgressPercent}%)`}</span>
-                  </span>
-                  <span className="text-slate-300 font-bold">
-                    Step {benchStepProgress} / {benchTotalSteps > 0 ? benchTotalSteps : "..."} ({benchProgressPercent}%)
-                  </span>
-                </div>
+          {/* Fullscreen Lightbox */}
+          {fullscreenImage && fullscreenImage.imageUrl && (
+            <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-6">
+              <button
+                onClick={() => setFullscreenImage(null)}
+                aria-label="Close Fullscreen"
+                className="absolute top-6 right-6 p-2.5 rounded-full apple-glass text-white hover:scale-105 transition-transform"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="relative max-w-5xl w-full h-[82vh] rounded-3xl overflow-hidden">
+                <Image
+                  src={fullscreenImage.imageUrl}
+                  alt={fullscreenImage.prompt}
+                  fill
+                  className="object-contain"
+                  unoptimized
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
-                {/* Progress bar container */}
-                <div className="w-full h-3 rounded-full bg-slate-900 overflow-hidden border border-slate-700">
-                  <div
-                    className="h-full bg-gradient-to-r from-[#0099ff] via-indigo-500 to-[#6633ff] transition-all duration-200"
-                    style={{ width: `${benchProgressPercent}%` }}
-                  />
+      {/* ===== VIEW 2: SAMPLER BENCHMARK MATRIX ===== */}
+      {activeSubTab === "benchmark" && (
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-6 p-1">
+          <div className="saas-card p-5 space-y-4">
+            <div className="flex items-center justify-between pb-2">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-8 h-8 rounded-xl flex items-center justify-center"
+                  style={{
+                    background: "var(--brand-accent-soft)",
+                    color: "var(--brand-accent)"
+                  }}
+                >
+                  <BarChart2 className="w-4 h-4" />
                 </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-[var(--foreground)] tracking-tight">
+                    Sampler Matrix Sweep
+                  </h3>
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    Compare latency &amp; FID across step counts
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleRunCustomBenchmark}
+                disabled={isBenchmarking}
+                className="px-4 py-2 saas-btn-primary flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isBenchmarking ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                <span className="text-xs">{isBenchmarking ? "Running..." : "Execute Sweep"}</span>
+              </button>
+            </div>
 
-                {/* Live Clock & ETA */}
-                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-sky-400" />
-                    <span>Wall-Clock Elapsed: <strong className="text-white font-mono">{benchElapsedTime}s</strong></span>
-                  </div>
-                  <div>
-                    {benchEtaTime > 0 ? (
-                      <span>Est. Remaining: <strong className="text-amber-400 font-mono">{benchEtaTime}s</strong></span>
-                    ) : (
-                      <span className="text-sky-400">Processing next configuration...</span>
-                    )}
-                  </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[11px] text-[var(--muted-foreground)] uppercase block mb-1.5 font-semibold">
+                  Samplers
+                </label>
+                <div className="flex gap-2">
+                  {["DDIM", "DDPM"].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => toggleSampler(s)}
+                      style={
+                        benchSamplers.includes(s)
+                          ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
+                          : undefined
+                      }
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                        benchSamplers.includes(s)
+                          ? "font-semibold"
+                          : "bg-[var(--surface-overlay)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-[11px] text-[var(--muted-foreground)] uppercase block mb-1.5 font-semibold">
+                  Step Checkpoints
+                </label>
+                <div className="flex gap-2">
+                  {[10, 20, 30, 50].map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => toggleStep(v)}
+                      style={
+                        benchSteps.includes(v)
+                          ? { background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }
+                          : undefined
+                      }
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                        benchSteps.includes(v)
+                          ? "font-semibold"
+                          : "bg-[var(--surface-overlay)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {benchLiveMsg && (
+              <div
+                className="px-3.5 py-2.5 rounded-xl text-xs"
+                style={{
+                  background: "var(--brand-accent-soft)",
+                  color: "var(--brand-accent)"
+                }}
+              >
+                {benchLiveMsg}
               </div>
             )}
           </div>
 
-          {/* REAL-TIME DUAL GRAPH: LATENCY PROFILE & FID CURVE WITH HOVER TOOLTIPS */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Latency Comparison Chart with Tooltip explanation */}
-            <div className="bg-[#131b2c] border border-[#23324d] rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-sky-400" />
-                  <h4 className="text-xs font-bold text-white font-mono">
-                    Wall-Clock Latency (Seconds) vs Steps
-                  </h4>
-                  {/* Tooltip trigger with question mark */}
-                  <div className="relative group cursor-pointer inline-block ml-1">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-400 hover:text-sky-400 transition-colors" />
-                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block z-30 w-72 p-2.5 rounded-lg bg-[#070b14] border border-sky-800/80 text-[11px] font-sans text-slate-200 shadow-xl backdrop-blur-md">
-                      <strong className="text-sky-400 font-mono block mb-1">Wall-Clock Generation Time:</strong>
-                      Measures actual real-world time (in seconds) taken by CUDA/GPU to complete all sampling steps and decode latents into an RGB image via the VAE.
-                      <div className="mt-1 text-[10px] text-slate-400 font-mono">Formula: O(T) — scales linearly with step count.</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 text-[10px] font-mono">
-                  <span className="text-[#0099ff] font-bold">● DDIM</span>
-                  <span className="text-[#6633ff] font-bold">● DDPM</span>
-                </div>
-              </div>
-
-              <div className="h-60 w-full">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="saas-card p-5 space-y-3">
+              <h4 className="text-xs font-semibold text-[var(--foreground)] uppercase tracking-wider">
+                Sampling Latency (s)
+              </h4>
+              <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={benchGraphData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                    <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-                    <XAxis dataKey="steps" stroke="#64748b" tick={{ fill: "#64748b", fontSize: 10 }} />
-                    <YAxis stroke="#64748b" tick={{ fill: "#64748b", fontSize: 10 }} />
+                  <LineChart data={benchGraphData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,140,0.16)" vertical={false} />
+                    <XAxis dataKey="steps" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#71717a" fontSize={11} unit="s" tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: "#0b1220",
-                        border: "1px solid #334155",
-                        borderRadius: "6px",
+                        backgroundColor: "var(--popover)",
+                        border: "none",
+                        borderRadius: "12px",
                         fontSize: "11px",
-                        color: "#fff"
+                        color: "var(--foreground)",
+                        boxShadow: "var(--glass-shadow)"
                       }}
                     />
-                    <Line type="monotone" dataKey="ddim_latency" name="DDIM (s)" stroke="#0099ff" strokeWidth={2.5} />
-                    <Line type="monotone" dataKey="ddpm_latency" name="DDPM (s)" stroke="#6633ff" strokeWidth={2.5} strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="ddim_latency" name="DDIM" stroke="var(--brand-accent)" strokeWidth={2.5} />
+                    <Line type="monotone" dataKey="ddpm_latency" name="DDPM" stroke="var(--brand-secondary)" strokeWidth={2} strokeDasharray="4 4" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
-
-            {/* FID Score Curve with Tooltip explanation */}
-            <div className="bg-[#131b2c] border border-[#23324d] rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5">
-                  <TrendingDown className="w-3.5 h-3.5 text-emerald-400" />
-                  <h4 className="text-xs font-bold text-white font-mono">
-                    FID Score vs Steps (Lower is Better ↓)
-                  </h4>
-                  {/* Tooltip trigger with question mark */}
-                  <div className="relative group cursor-pointer inline-block ml-1">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-400 hover:text-emerald-400 transition-colors" />
-                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block z-30 w-72 p-2.5 rounded-lg bg-[#070b14] border border-emerald-800/80 text-[11px] font-sans text-slate-200 shadow-xl backdrop-blur-md">
-                      <strong className="text-emerald-400 font-mono block mb-1">Fréchet Inception Distance (FID):</strong>
-                      Measures visual quality &amp; realism by comparing feature representations of generated images against reference datasets. Lower score means closer visual distribution to real photos.
-                      <div className="mt-1 text-[10px] text-slate-400 font-mono">Target: &lt; 5.0 (Optimal convergence).</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 text-[10px] font-mono">
-                  <span className="text-[#0099ff] font-bold">● DDIM FID</span>
-                  <span className="text-[#6633ff] font-bold">● DDPM FID</span>
-                </div>
-              </div>
-
-              <div className="h-60 w-full">
+            <div className="saas-card p-5 space-y-3">
+              <h4 className="text-xs font-semibold text-[var(--foreground)] uppercase tracking-wider">
+                FID Quality (lower = better)
+              </h4>
+              <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={benchGraphData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                    <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-                    <XAxis dataKey="steps" stroke="#64748b" tick={{ fill: "#64748b", fontSize: 10 }} />
-                    <YAxis stroke="#64748b" domain={[0, 20]} tick={{ fill: "#64748b", fontSize: 10 }} />
+                  <LineChart data={benchGraphData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,140,0.16)" vertical={false} />
+                    <XAxis dataKey="steps" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: "#0b1220",
-                        border: "1px solid #334155",
-                        borderRadius: "6px",
+                        backgroundColor: "var(--popover)",
+                        border: "none",
+                        borderRadius: "12px",
                         fontSize: "11px",
-                        color: "#fff"
+                        color: "var(--foreground)",
+                        boxShadow: "var(--glass-shadow)"
                       }}
                     />
-                    <Line type="monotone" dataKey="ddim_fid" name="DDIM FID" stroke="#0099ff" strokeWidth={2.5} />
-                    <Line type="monotone" dataKey="ddpm_fid" name="DDPM FID" stroke="#6633ff" strokeWidth={2.5} strokeDasharray="4 4" />
+                    <Line type="monotone" dataKey="ddim_fid" name="DDIM FID" stroke="var(--brand-accent)" strokeWidth={2.5} />
+                    <Line type="monotone" dataKey="ddpm_fid" name="DDPM FID" stroke="var(--brand-secondary)" strokeWidth={2} strokeDasharray="4 4" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
           </div>
-
-          {/* Results Table with Image View / Inspect Option */}
-          {benchResultsList.length > 0 && (
-            <div className="p-4 rounded-xl bg-[#131b2c] border border-[#23324d] font-mono text-xs">
-              <h4 className="text-xs font-bold text-white mb-3">
-                Completed Benchmark Run Results ({benchResultsList.length} checkpoints):
-              </h4>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-[#23324d] text-slate-400 text-[10px] uppercase">
-                      <th className="py-2 px-2">Sampler</th>
-                      <th className="py-2 px-2">Steps</th>
-                      <th className="py-2 px-2">Latency</th>
-                      <th className="py-2 px-2">Est. FID</th>
-                      <th className="py-2 px-2">Peak VRAM</th>
-                      <th className="py-2 px-2">Timestamp</th>
-                      <th className="py-2 px-2 text-right">Inspect Output</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#1e293b]">
-                    {benchResultsList.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/40">
-                        <td className="py-2 px-2 font-bold">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[11px] ${
-                              row.sampler.includes("DDIM")
-                                ? "bg-[#0099ff]/20 text-[#0099ff] border border-[#0099ff]/40"
-                                : "bg-[#6633ff]/20 text-[#a580ff] border border-[#6633ff]/40"
-                            }`}
-                          >
-                            {row.sampler}
-                          </span>
-                        </td>
-                        <td className="py-2 px-2 text-white">{row.steps}</td>
-                        <td className="py-2 px-2 text-emerald-400">{row.latency}s</td>
-                        <td className="py-2 px-2 text-amber-300">{row.fid}</td>
-                        <td className="py-2 px-2 text-slate-300">{row.vram_mb} MB</td>
-                        <td className="py-2 px-2 text-slate-500">{row.timestamp}</td>
-                        <td className="py-2 px-2 text-right">
-                          <button
-                            onClick={() =>
-                              setPreviewBenchmarkImage({
-                                url:
-                                  row.image_url ||
-                                  "/photorealistic_modern_luxury_architectural_penthouse_master_bedroom_interior.png",
-                                sampler: row.sampler,
-                                steps: row.steps,
-                                latency: row.latency,
-                                fid: row.fid
-                              })
-                            }
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#0f1728] border border-[#23324d] hover:border-sky-400 text-sky-400 hover:text-white transition-colors text-[11px]"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>View Image</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* MODAL FOR VIEWING BENCHMARK GENERATED IMAGE */}
-          {previewBenchmarkImage && (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-              <div className="bg-[#0f1728] border border-[#1e293b] rounded-xl max-w-2xl w-full p-5 space-y-4 shadow-2xl relative">
-                <div className="flex items-center justify-between pb-3 border-b border-[#1e293b]">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${
-                        previewBenchmarkImage.sampler.includes("DDIM")
-                          ? "bg-[#0099ff]/20 text-[#0099ff] border border-[#0099ff]"
-                          : "bg-[#6633ff]/20 text-[#a580ff] border border-[#6633ff]"
-                      }`}
-                    >
-                      {previewBenchmarkImage.sampler}
-                    </span>
-                    <span className="text-sm font-bold text-white font-mono">
-                      {previewBenchmarkImage.steps} Steps
-                    </span>
-                    <span className="text-xs text-slate-400 font-mono">
-                      • {previewBenchmarkImage.latency}s • FID {previewBenchmarkImage.fid}
-                    </span>
-                  </div>
-
-                  <button
-                    onClick={() => setPreviewBenchmarkImage(null)}
-                    className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* Rendered Preview */}
-                <div className="relative aspect-video w-full rounded-lg overflow-hidden border border-[#23324d] bg-black">
-                  <Image
-                    src={previewBenchmarkImage.url}
-                    alt="Benchmark preview"
-                    fill
-                    className="object-cover"
-                    unoptimized
-                  />
-                </div>
-
-                <div className="flex items-center justify-between pt-1 font-mono text-[11px] text-slate-400">
-                  <span>Target: LSUN Bedrooms Domain Verification</span>
-                  <button
-                    onClick={() => setPreviewBenchmarkImage(null)}
-                    className="px-4 py-1.5 rounded bg-sky-500 text-slate-950 font-bold hover:bg-sky-400 transition-colors"
-                  >
-                    Close Preview
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

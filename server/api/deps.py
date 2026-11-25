@@ -42,3 +42,22 @@ async def get_current_user(
             detail="Inactive account"
         )
     return user
+
+
+async def get_optional_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """Returns the authenticated active user if a valid Bearer token is present, else None."""
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+        user_id: Optional[str] = payload.get("sub")
+        if not user_id:
+            return None
+        stmt = select(User).where(User.id == user_id, User.is_active == True)
+        result = await db.execute(stmt)
+        return result.scalars().first()
+    except Exception:
+        return None

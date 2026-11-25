@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import AsyncGenerator
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Index, text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from core.auth_config import auth_settings
@@ -58,14 +58,34 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False,
 )
 
+def _run_schema_migrations(sync_conn):
+    """Safely add new columns to pre-existing tables without dropping data."""
+    dialect = sync_conn.dialect.name
+    if dialect == "postgresql":
+        sync_conn.execute(text(
+            "ALTER TABLE generations ADD COLUMN IF NOT EXISTS chat_id VARCHAR(36) "
+            "REFERENCES chat_sessions(id) ON DELETE SET NULL"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_generations_chat_id ON generations (chat_id)"
+        ))
+    elif dialect == "sqlite":
+        cols = [row[1] for row in sync_conn.execute(text("PRAGMA table_info(generations)")).fetchall()]
+        if "chat_id" not in cols:
+            sync_conn.execute(text("ALTER TABLE generations ADD COLUMN chat_id VARCHAR(36)"))
+            sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_generations_chat_id ON generations (chat_id)"))
+
+
 async def init_db():
     global engine, AsyncSessionLocal
+    import models.gallery  # noqa: F401 - register ChatSession & Generation before create_all
     try:
         # Use asyncio.wait_for with a 2-second timeout to check postgres reachability
         import asyncio
         async def _check():
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(_run_schema_migrations)
         await asyncio.wait_for(_check(), timeout=2.0)
         print(f"[Database] Successfully connected and initialized: {auth_settings.DATABASE_URL}")
     except Exception as e:
@@ -82,6 +102,7 @@ async def init_db():
             )
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(_run_schema_migrations)
             print("[Database] Successfully connected to fallback SQLite database.")
         else:
             raise e

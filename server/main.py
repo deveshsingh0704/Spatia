@@ -1,17 +1,20 @@
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 
-# Ensure server root is in sys.path
+# Ensure server root is in sys.path and .env variables are loaded into os.environ
 SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
+load_dotenv(SERVER_ROOT / ".env", override=False)
 
 # Hardware and System Detection via PyTorch & psutil
 import torch
@@ -35,11 +38,14 @@ app.add_middleware(
 # Authentication & Feature Routers
 from api.auth import router as auth_router
 from api.gallery import router as gallery_router
+from api.chats import router as chats_router
 from api.benchmark_routes import router as benchmark_router
-from models.user import init_db
+from api.deps import get_optional_current_user
+from models.user import User, init_db
 
 app.include_router(auth_router)
 app.include_router(gallery_router)
+app.include_router(chats_router)
 app.include_router(benchmark_router)
 
 @app.on_event("startup")
@@ -537,9 +543,22 @@ async def run_custom_benchmark(req: CustomBenchmarkRunRequest, job_id: Optional[
                 )
                 elapsed = time.perf_counter() - t0
                 if img is not None:
-                    generated_files = sorted(GENERATED_DIR.glob("*.png"), key=os.path.getmtime, reverse=True)
-                    if generated_files:
-                        image_url = f"http://localhost:8001/outputs/generated/{generated_files[0].name}"
+                    from services.storage import get_storage_service
+                    storage = get_storage_service()
+                    bench_url, bench_key = storage.save_image(
+                        img,
+                        filename_prefix=f"bench_{sampler.lower()}_{steps}",
+                        metadata={
+                            "prompt": req.prompt or "",
+                            "model_name": req.model_name,
+                            "sampler_name": sampler,
+                            "steps": steps,
+                            "seed": req.seed,
+                            "resolution": "512x512",
+                            "latency_sec": round(elapsed, 2),
+                        },
+                    )
+                    image_url = storage.resolve_url(bench_url, bench_key) or bench_url
             except Exception as e:
                 # Calibrated hardware fallback
                 base_per_step = 0.18 if hw["cuda_available"] else 1.2
@@ -628,6 +647,7 @@ class GenerateRequest(BaseModel):
     guidance_scale: float = 7.5
     seed: int = 42
     resolution: str = "512x512"
+    chat_id: Optional[str] = Field(default=None, description="Optional chat session ID to append this generation to")
 
 
 @app.get("/api/generate/stream/{job_id}")
@@ -667,7 +687,11 @@ async def stream_generation_progress(job_id: str):
 
 
 @app.post("/api/generate")
-async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(None)):
+async def generate_image(
+    req: GenerateRequest,
+    job_id: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
     """
     Executes actual diffusion sampling using the imported GeneratorService.
     Supports real-time callback hooks to feed ACTIVE_GENERATION_JOBS for live SSE streaming.
@@ -716,6 +740,11 @@ async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(Non
         resolution = (512, 512)
 
     try:
+        print(
+            f"\n[Generate] Starting: model='{req.model_name}' | sampler={req.sampler_name} | "
+            f"res={resolution[0]}x{resolution[1]} | steps={req.steps} | seed={req.seed}",
+            flush=True,
+        )
         generator = get_generator()
         img, metadata = await asyncio.to_thread(
             generator.generate,
@@ -731,6 +760,7 @@ async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(Non
         )
 
         elapsed_total = round(time.perf_counter() - start_time, 2)
+        print(f"[Generate] Diffusion finished in {elapsed_total}s", flush=True)
 
         if img is not None:
             # Save using flexible Storage Service (S3 / R2 if credentials exist, else server/outputs/gallery/)
@@ -756,7 +786,8 @@ async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(Non
             }
 
             storage = get_storage_service()
-            image_url, storage_key = storage.save_image(img, filename_prefix="mockup", metadata=embed_meta)
+            canonical_image_url, storage_key = storage.save_image(img, filename_prefix="mockup", metadata=embed_meta)
+            display_image_url = storage.resolve_url(canonical_image_url, storage_key) or canonical_image_url
 
             # Clean, intelligent prompt-derived title
             clean_title = req.prompt.strip().rstrip(".,;")
@@ -784,15 +815,58 @@ async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(Non
             candidate_title = " ".join(words).title()
             final_title = candidate_title if len(candidate_title) > 3 else f"Architectural Mockup #{req.seed}"
 
-            # Automatically persist generation metadata to PostgreSQL / SQLite on main event loop
+            # Automatically persist chat session + generation metadata to PostgreSQL / SQLite
             saved_id = None
+            saved_chat_id = req.chat_id
+            saved_chat_title = final_title
+            chat_is_saved = False
+            chat_is_shared = False
+            chat_share_token = None
             saved_at = None
             saved_to_db = False
             try:
+                from sqlalchemy import select
+                from models.gallery import ChatSession
+                neg_tags_list = [t.strip() for t in (req.negative_prompt or "").split(",") if t.strip()]
                 async with AsyncSessionLocal() as session:
+                    chat_session = None
+                    if req.chat_id:
+                        chat_session = (
+                            await session.execute(select(ChatSession).filter(ChatSession.id == req.chat_id))
+                        ).scalar_one_or_none()
+
+                    if chat_session is None:
+                        chat_session = ChatSession(
+                            id=req.chat_id or None,
+                            user_id=current_user.id if current_user else None,
+                            title=final_title,
+                            model_name=req.model_name,
+                            sampler_name=req.sampler_name,
+                            steps=req.steps,
+                            guidance_scale=req.guidance_scale,
+                            seed=req.seed,
+                            resolution=f"{resolution[0]}x{resolution[1]}",
+                            negative_tags=json.dumps(neg_tags_list),
+                            preview_image_url=canonical_image_url,
+                        )
+                        session.add(chat_session)
+                        await session.flush()
+                    else:
+                        chat_session.model_name = req.model_name
+                        chat_session.sampler_name = req.sampler_name
+                        chat_session.steps = req.steps
+                        chat_session.guidance_scale = req.guidance_scale
+                        chat_session.seed = req.seed
+                        chat_session.resolution = f"{resolution[0]}x{resolution[1]}"
+                        chat_session.negative_tags = json.dumps(neg_tags_list)
+                        chat_session.preview_image_url = canonical_image_url
+                        chat_session.updated_at = datetime.utcnow()
+
                     gen_record = Generation(
+                        user_id=current_user.id if current_user else None,
+                        chat_id=chat_session.id,
                         title=final_title,
-                        image_url=image_url,
+                        image_url=canonical_image_url,
                         storage_key=storage_key,
                         prompt=req.prompt,
                         negative_prompt=req.negative_prompt,
@@ -810,18 +884,29 @@ async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(Non
                     session.add(gen_record)
                     await session.commit()
                     await session.refresh(gen_record)
+                    await session.refresh(chat_session)
                     saved_id = gen_record.id
+                    saved_chat_id = chat_session.id
+                    saved_chat_title = chat_session.title
+                    chat_is_saved = bool(chat_session.is_saved)
+                    chat_is_shared = bool(chat_session.is_shared)
+                    chat_share_token = chat_session.share_token if chat_session.is_shared else None
                     saved_at = gen_record.created_at.isoformat() if gen_record.created_at else None
                     saved_to_db = True
-                    print(f"[Gallery Database] Successfully saved new mockup '{final_title}' (id={saved_id}, {storage_key}) to DB!")
+                    print(f"[Gallery Database] Saved '{final_title}' (id={saved_id}, chat={saved_chat_id}, {storage_key}) to DB!")
             except Exception as db_err:
                 print(f"[Database Auto-Save Error]: {db_err}")
 
             res_payload = {
                 "status": "completed",
                 "id": saved_id,
+                "chat_id": saved_chat_id,
+                "chat_title": saved_chat_title,
+                "is_saved": chat_is_saved,
+                "is_shared": chat_is_shared,
+                "share_token": chat_share_token,
                 "title": final_title,
-                "image_url": image_url,
+                "image_url": display_image_url,
                 "storage_key": storage_key,
                 "prompt": req.prompt,
                 "negative_prompt": req.negative_prompt,
@@ -849,7 +934,7 @@ async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(Non
                 "percent": 100,
                 "elapsed_sec": elapsed_total,
                 "eta_sec": 0.0,
-                "image_url": image_url,
+                "image_url": display_image_url,
                 "telemetry": res_payload
             }
 

@@ -5,11 +5,41 @@ from sqlalchemy.orm import relationship
 from models.user import Base
 
 
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String(255), nullable=False, default="Untitled Studio Project")
+
+    # Saved Studio Workspace Parameters
+    model_name = Column(String(100), nullable=False, default="Stable Diffusion v1.5 (Fine-Tuned)")
+    sampler_name = Column(String(50), nullable=False, default="DDIM")
+    steps = Column(Integer, nullable=False, default=20)
+    guidance_scale = Column(Float, nullable=False, default=7.5)
+    seed = Column(BigInteger, nullable=False, default=42)
+    resolution = Column(String(20), nullable=False, default="512x512")
+    negative_tags = Column(Text, nullable=True)  # JSON-encoded list of negative tags
+
+    # Visual Preview & State Flags
+    preview_image_url = Column(String(512), nullable=True)
+    is_saved = Column(Boolean, nullable=False, default=False, index=True)
+    is_shared = Column(Boolean, nullable=False, default=False, index=True)
+    share_token = Column(String(64), unique=True, nullable=True, index=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False, index=True)
+
+    generations = relationship("Generation", back_populates="chat_session")
+
+
 class Generation(Base):
     __tablename__ = "generations"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    chat_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String(255), nullable=False, default="Untitled Architectural Mockup")
     image_url = Column(String(512), nullable=False)
     storage_key = Column(String(255), nullable=False)
@@ -38,6 +68,7 @@ class Generation(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
+    chat_session = relationship("ChatSession", back_populates="generations")
     library_associations = relationship("LibraryItem", back_populates="generation", cascade="all, delete-orphan")
 
 

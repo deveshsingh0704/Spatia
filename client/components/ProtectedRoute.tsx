@@ -21,14 +21,18 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
 
   if (isLoading) {
     return (
-      <div suppressHydrationWarning className="min-h-screen bg-[#070b14] flex flex-col items-center justify-center text-slate-100">
-        <div suppressHydrationWarning className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-[#0d1424] border border-[#1e2a40] shadow-2xl">
-          <div suppressHydrationWarning className="w-12 h-12 rounded-xl bg-gradient-to-tr from-sky-500 via-indigo-500 to-cyan-300 flex items-center justify-center p-1 shadow-lg shadow-sky-500/25">
-            <Layers className="w-6 h-6 text-white" />
+      <div suppressHydrationWarning className="min-h-screen flex flex-col items-center justify-center text-[var(--foreground)]">
+        <div suppressHydrationWarning className="flex flex-col items-center gap-4 p-8 rounded-3xl liquid-glass-elevated">
+          <div
+            suppressHydrationWarning
+            className="w-12 h-12 rounded-2xl flex items-center justify-center p-1"
+            style={{ background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }}
+          >
+            <Layers className="w-6 h-6" />
           </div>
-          <div suppressHydrationWarning className="flex items-center gap-2.5 text-xs font-mono text-slate-400">
-            <Loader2 className="w-4 h-4 text-sky-400 animate-spin" />
-            <span>Validating Session &amp; Cluster Access...</span>
+          <div suppressHydrationWarning className="flex items-center gap-2.5 text-xs font-mono text-[var(--muted-foreground)]">
+            <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--brand-accent)" }} />
+            <span>Validating Session &amp; Workspace Access...</span>
           </div>
         </div>
       </div>

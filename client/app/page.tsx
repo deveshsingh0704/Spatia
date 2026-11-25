@@ -20,8 +20,8 @@ export default function RootPage() {
   }, [isLoading, isAuthenticated, router]);
 
   return (
-    <div className="min-h-screen bg-[#070b14] flex items-center justify-center">
-      <Loader2 className="w-8 h-8 text-sky-400 animate-spin" />
+    <div className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
     </div>
   );
 }

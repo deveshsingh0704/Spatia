@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { Header } from "@/components/Header";
+import { LeftSidebar } from "@/components/LeftSidebar";
 import { DesignGallery } from "@/components/DesignGallery";
 import { INITIAL_BENCHMARK_DATA } from "@/data/benchmarkData";
 import { BenchmarkData } from "@/types/benchmark";
@@ -30,10 +30,12 @@ export default function GalleryPage() {
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-sky-500 selection:text-black">
-        <Header activeTab="gallery" setActiveTab={() => {}} system={data.system} />
-        <main className="flex-1 max-w-[1440px] w-full mx-auto px-6 py-5">
-          <DesignGallery />
+      <div className="min-h-screen text-[var(--foreground)] flex font-sans">
+        <LeftSidebar activeTab="gallery" />
+        <main className="flex-1 pl-20 sm:pl-[88px] w-full min-h-screen">
+          <div className="max-w-[1440px] mx-auto px-6 py-6">
+            <DesignGallery />
+          </div>
         </main>
       </div>
     </ProtectedRoute>

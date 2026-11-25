@@ -16,6 +16,7 @@ import {
   Loader2,
   Terminal,
 } from "lucide-react";
+import { GlassSelect } from "@/components/ui/GlassSelect";
 
 export default function SignupPage() {
   const { register, isAuthenticated, isLoading } = useAuth();
@@ -50,58 +51,55 @@ export default function SignupPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#070b14] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-sky-400 animate-spin" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--brand-accent)" }} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex items-center justify-center p-4 sm:p-6 font-sans">
-      <div className="w-full max-w-4xl bg-[#090d16] border border-[#1e293b] rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
-        
-        {/* Left Side: Brand Hero */}
-        <div className="w-full md:w-5/12 bg-gradient-to-b from-[#0c1424] via-[#090e1a] to-[#060a12] p-8 border-b md:border-b-0 md:border-r border-[#1a2333] flex flex-col justify-between">
+    <div className="min-h-screen text-[var(--foreground)] flex items-center justify-center p-4 sm:p-6 font-sans">
+      <div className="w-full max-w-4xl saas-card rounded-3xl overflow-hidden flex flex-col md:flex-row">
+        <div className="w-full md:w-5/12 bg-[var(--surface-overlay)] p-8 flex flex-col justify-between">
           <div>
-            <div className="flex items-center gap-2 mb-6">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-500 via-indigo-500 to-cyan-300 flex items-center justify-center p-1 shadow-lg shadow-sky-500/25">
-                <Sparkles className="w-4 h-4 text-white" />
+            <div className="flex items-center gap-2.5 mb-6">
+              <div
+                className="w-8 h-8 rounded-xl flex items-center justify-center p-1"
+                style={{ background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }}
+              >
+                <Sparkles className="w-4 h-4" />
               </div>
-              <span className="text-white font-extrabold text-lg tracking-tight font-sans">
-                LatentCraft <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800/80 font-semibold ml-1">Studio</span>
+              <span className="text-[var(--foreground)] font-extrabold text-lg tracking-tight font-heading">
+                LatentCraft
               </span>
             </div>
 
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-950/70 border border-sky-800/60 text-sky-400 text-[10px] font-mono font-semibold mb-4">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
-              PRD US-11 • DETERMINISTIC AUTH
-            </div>
-
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight leading-snug">
-              Instant workspace onboarding with <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-cyan-200">50 GPU Seconds</span>.
+            <h1 className="text-xl sm:text-2xl font-bold text-[var(--foreground)] tracking-tight leading-snug">
+              Instant workspace onboarding for{" "}
+              <span style={{ color: "var(--brand-accent)" }}>spatial synthesis</span>.
             </h1>
 
-            <p className="text-xs text-slate-400 mt-3 leading-relaxed">
+            <p className="text-xs text-[var(--muted-foreground)] mt-3 leading-relaxed">
               Synthesize production-ready spatial mockups with isolated user sessions and verified non-Markovian DDIM samplers.
             </p>
 
             <div className="mt-6 space-y-3">
-              <div className="flex items-start gap-2.5 text-xs text-slate-300">
+              <div className="flex items-start gap-2.5 text-xs text-[var(--foreground)]">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <span>Encrypted JWT session keys + automatic token rotation</span>
               </div>
-              <div className="flex items-start gap-2.5 text-xs text-slate-300">
-                <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2.5 text-xs text-[var(--foreground)]">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--brand-accent)" }} />
                 <span>Bcrypt work factor 12 cryptographic hash resistance</span>
               </div>
-              <div className="flex items-start gap-2.5 text-xs text-slate-300">
-                <Terminal className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
-                <span>Dedicated gallery isolation per workspace tenant</span>
+              <div className="flex items-start gap-2.5 text-xs text-[var(--foreground)]">
+                <Terminal className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--brand-secondary)" }} />
+                <span>Dedicated gallery &amp; metadata persistence</span>
               </div>
             </div>
           </div>
 
-          <div className="mt-8 pt-4 border-t border-slate-800/60 text-[11px] font-mono text-slate-500 flex items-center justify-between">
+          <div className="mt-8 pt-4 text-[11px] font-mono text-[var(--muted-foreground)] flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
               FastAPI /api/v1/auth
@@ -110,109 +108,103 @@ export default function SignupPage() {
           </div>
         </div>
 
-        {/* Right Side: Signup Form */}
-        <div className="w-full md:w-7/12 p-8 flex flex-col justify-center bg-[#090d16]">
+        <div className="w-full md:w-7/12 p-8 flex flex-col justify-center bg-[var(--card)]">
           <div className="max-w-md w-full mx-auto">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] uppercase tracking-wider font-mono text-sky-400 font-semibold">
-                WORKSPACE ACCESS
-              </span>
-              <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-emerald-400" /> PRD NFR-04 Safe
-              </span>
-            </div>
-
-            <h2 className="text-2xl font-bold text-white tracking-tight">
+            <h2 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
               Create Studio Account
             </h2>
-            <p className="text-xs text-slate-400 mt-1 mb-6">
-              Register your workspace for 50 free GPU inference seconds and isolated gallery sync.
+            <p className="text-xs text-[var(--muted-foreground)] mt-1 mb-6">
+              Register your workspace for isolated gallery and generation metadata sync.
             </p>
 
-            {/* Nav switcher between Login and Signup */}
-            <div className="grid grid-cols-2 p-1 bg-[#121927] border border-[#202d44] rounded-xl mb-6">
+            <div className="grid grid-cols-2 p-1 bg-[var(--surface-overlay)] rounded-xl mb-6">
               <Link
                 href="/login"
-                className="py-2 text-center text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
+                className="py-2 text-center text-xs font-semibold rounded-lg text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               >
                 Sign In
               </Link>
-              <div className="py-2 text-center text-xs font-semibold rounded-lg bg-[#1f2b42] text-white shadow-sm">
+              <div
+                className="py-2 text-center text-xs font-semibold rounded-lg"
+                style={{ background: "var(--brand-accent)", color: "var(--brand-accent-fg)" }}
+              >
                 Create Account
               </div>
             </div>
 
             {errorMsg && (
-              <div className="mb-4 p-3 rounded-lg bg-rose-950/60 border border-rose-800 text-rose-300 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/15 text-rose-400 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{errorMsg}</span>
               </div>
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                <label className="block text-xs font-mono text-[var(--foreground)] mb-1.5">
                   WORK EMAIL
                 </label>
                 <div className="relative">
-                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]" />
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="architect@latentspace.ai"
-                    className="w-full bg-[#121927] border border-[#202d44] focus:border-sky-500 focus:ring-1 focus:ring-sky-500 rounded-lg pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition-all font-mono"
+                    className="w-full saas-input pl-10 pr-4 py-2.5 text-xs font-mono"
                   />
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-mono text-slate-300">
+                  <label className="text-xs font-mono text-[var(--foreground)]">
                     CREATE PASSWORD (MIN 6 CHARS)
                   </label>
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                    className="text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] flex items-center gap-1"
                   >
                     {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     <span>{showPassword ? "Hide" : "Show"}</span>
                   </button>
                 </div>
                 <div className="relative">
-                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]" />
                   <input
                     type={showPassword ? "text" : "password"}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••••••"
-                    className="w-full bg-[#121927] border border-[#202d44] focus:border-sky-500 focus:ring-1 focus:ring-sky-500 rounded-lg pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition-all font-mono"
+                    className="w-full saas-input pl-10 pr-10 py-2.5 text-xs font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                <label className="block text-xs font-mono text-[var(--foreground)] mb-1.5">
                   WORKSPACE ROLE
                 </label>
-                <select
+                <GlassSelect
+                  ariaLabel="Workspace Role"
                   value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  className="w-full bg-[#121927] border border-[#202d44] focus:border-sky-500 rounded-lg px-3 py-2 text-xs text-white outline-none font-mono"
-                >
-                  <option value="user">User (Spatial Designer)</option>
-                  <option value="researcher">Researcher (Diffusion Sampler Analysis)</option>
-                  <option value="admin">Administrator (Compute Cluster Control)</option>
-                </select>
+                  onChange={setRole}
+                  buttonClassName="font-mono"
+                  options={[
+                    { value: "user", label: "User (Spatial Designer)" },
+                    { value: "researcher", label: "Researcher (Diffusion Sampler Analysis)" },
+                    { value: "admin", label: "Administrator" }
+                  ]}
+                />
               </div>
 
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-sky-500 via-indigo-500 to-cyan-400 hover:from-sky-400 hover:to-cyan-300 text-slate-950 font-bold text-xs tracking-wide transition-all shadow-lg shadow-sky-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full mt-2 py-3 px-4 rounded-xl saas-btn-primary text-xs tracking-wide flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <>
@@ -228,9 +220,9 @@ export default function SignupPage() {
               </button>
             </form>
 
-            <div className="mt-6 text-center text-xs text-slate-500">
+            <div className="mt-6 text-center text-xs text-[var(--muted-foreground)]">
               Already have an account?{" "}
-              <Link href="/login" className="text-sky-400 hover:underline font-semibold">
+              <Link href="/login" style={{ color: "var(--brand-accent)" }} className="hover:underline font-semibold">
                 Sign in here
               </Link>
             </div>

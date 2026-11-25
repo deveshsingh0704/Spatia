@@ -38,9 +38,14 @@ wheels/
 **/dataset/
 **/lsun_bedroom_2k/
 **/data/
+!client/data/
+!client/data/**
 *.png
 *.jpg
 *.jpeg
+!client/public/**/*.png
+!client/public/**/*.jpg
+!client/public/**/*.jpeg
 
 # --- Training Outputs, Model Weights & Checkpoints ---
 **/outputs/sd15_bedroom_lora/

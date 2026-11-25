@@ -48,7 +48,7 @@ from api.auth import router as auth_router
 from api.gallery import router as gallery_router
 from api.chats import router as chats_router
 from api.benchmark_routes import router as benchmark_router
-from api.deps import get_optional_current_user
+from api.deps import get_current_user
 from models.user import User, init_db
 
 app.include_router(auth_router)
@@ -714,7 +714,7 @@ async def stream_generation_progress(job_id: str):
 async def generate_image(
     req: GenerateRequest,
     job_id: Optional[str] = Query(None),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Executes actual diffusion sampling using the imported GeneratorService.
@@ -901,13 +901,18 @@ async def generate_image(
                     chat_session = None
                     if req.chat_id:
                         chat_session = (
-                            await session.execute(select(ChatSession).filter(ChatSession.id == req.chat_id))
+                            await session.execute(
+                                select(ChatSession).filter(
+                                    ChatSession.id == req.chat_id,
+                                    ChatSession.user_id == current_user.id,
+                                )
+                            )
                         ).scalar_one_or_none()
 
                     if chat_session is None:
                         chat_session = ChatSession(
                             id=req.chat_id or None,
-                            user_id=current_user.id if current_user else None,
+                            user_id=current_user.id,
                             title=final_title,
                             model_name=req.model_name,
                             sampler_name=req.sampler_name,

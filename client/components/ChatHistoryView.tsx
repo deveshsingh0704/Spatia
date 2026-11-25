@@ -22,9 +22,11 @@ import {
 } from "lucide-react";
 import { ChatSessionItem } from "@/types/gallery";
 import { apiUrl } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 export const ChatHistoryView: React.FC = () => {
   const router = useRouter();
+  const { fetchWithAuth } = useAuth();
   const [chats, setChats] = useState<ChatSessionItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -46,7 +48,7 @@ export const ChatHistoryView: React.FC = () => {
       if (filterMode === "saved") params.append("saved_only", "true");
       if (filterMode === "shared") params.append("shared_only", "true");
 
-      const res = await fetch(apiUrl(`/api/chats?${params.toString()}`));
+      const res = await fetchWithAuth(apiUrl(`/api/chats?${params.toString()}`));
       if (res.ok) {
         const data = await res.json();
         setChats(data.chats || []);
@@ -73,7 +75,7 @@ export const ChatHistoryView: React.FC = () => {
     const nextSaved = !chat.is_saved;
     setChats((prev) => prev.map((c) => (c.id === chat.id ? { ...c, is_saved: nextSaved } : c)));
     try {
-      await fetch(apiUrl(`/api/chats/${encodeURIComponent(chat.id)}`), {
+      await fetchWithAuth(apiUrl(`/api/chats/${encodeURIComponent(chat.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_saved: nextSaved })
@@ -86,7 +88,7 @@ export const ChatHistoryView: React.FC = () => {
   const handleRenameSubmit = async () => {
     if (!renameTarget || !renameTitle.trim()) return;
     try {
-      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(renameTarget.id)}`), {
+      const res = await fetchWithAuth(apiUrl(`/api/chats/${encodeURIComponent(renameTarget.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: renameTitle.trim() })
@@ -103,7 +105,7 @@ export const ChatHistoryView: React.FC = () => {
 
   const handleShareToggle = async (chat: ChatSessionItem, enable: boolean) => {
     try {
-      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(chat.id)}/share`), {
+      const res = await fetchWithAuth(apiUrl(`/api/chats/${encodeURIComponent(chat.id)}/share`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_shared: enable })

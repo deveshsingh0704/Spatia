@@ -9,7 +9,7 @@ from sqlalchemy import select, func, desc, asc
 
 from models.user import User, get_db
 from models.gallery import ChatSession, Generation
-from api.deps import get_optional_current_user
+from api.deps import get_current_user
 from services.storage import get_storage_service
 
 router = APIRouter(prefix="/api/chats", tags=["Chat Sessions"])
@@ -109,12 +109,14 @@ async def list_chat_sessions(
     saved_only: bool = Query(False),
     shared_only: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List saved chat sessions with image counts and AWS S3 presigned preview thumbnails."""
     stmt = (
         select(ChatSession, func.count(Generation.id).label("msg_count"))
         .outerjoin(Generation, Generation.chat_id == ChatSession.id)
+        .filter(ChatSession.user_id == current_user.id)
         .group_by(ChatSession.id)
     )
 
@@ -138,12 +140,12 @@ async def list_chat_sessions(
 @router.post("")
 async def create_chat_session(
     payload: ChatCreateSchema,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new persistent chat project with a unique UUID."""
     chat = ChatSession(
-        user_id=current_user.id if current_user else None,
+        user_id=current_user.id,
         title=(payload.title or "Untitled Studio Project").strip(),
         model_name=payload.model_name,
         sampler_name=payload.sampler_name,
@@ -190,10 +192,15 @@ async def get_shared_chat_session(
 @router.get("/{chat_id}")
 async def get_chat_session(
     chat_id: str,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Load a chat session, its saved parameters, and its full chronological generation history."""
-    chat = (await db.execute(select(ChatSession).filter(ChatSession.id == chat_id))).scalar_one_or_none()
+    chat = (
+        await db.execute(
+            select(ChatSession).filter(ChatSession.id == chat_id, ChatSession.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
@@ -214,10 +221,15 @@ async def get_chat_session(
 async def update_chat_session(
     chat_id: str,
     payload: ChatUpdateSchema,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update chat title, saved bookmark state, or workspace parameter snapshot."""
-    chat = (await db.execute(select(ChatSession).filter(ChatSession.id == chat_id))).scalar_one_or_none()
+    chat = (
+        await db.execute(
+            select(ChatSession).filter(ChatSession.id == chat_id, ChatSession.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
@@ -254,10 +266,15 @@ async def update_chat_session(
 async def toggle_share_chat_session(
     chat_id: str,
     payload: ChatShareSchema,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Enable or disable public read-only sharing for a chat session."""
-    chat = (await db.execute(select(ChatSession).filter(ChatSession.id == chat_id))).scalar_one_or_none()
+    chat = (
+        await db.execute(
+            select(ChatSession).filter(ChatSession.id == chat_id, ChatSession.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
@@ -280,10 +297,15 @@ async def toggle_share_chat_session(
 async def delete_chat_session(
     chat_id: str,
     delete_images: bool = Query(False),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a chat session (preserving Gallery images by default unless delete_images=true)."""
-    chat = (await db.execute(select(ChatSession).filter(ChatSession.id == chat_id))).scalar_one_or_none()
+    chat = (
+        await db.execute(
+            select(ChatSession).filter(ChatSession.id == chat_id, ChatSession.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat session not found")
 

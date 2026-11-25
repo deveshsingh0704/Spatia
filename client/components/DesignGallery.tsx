@@ -23,9 +23,11 @@ import {
 import { GlassSelect } from "@/components/ui/GlassSelect";
 import { GenerationItem, GalleryResponse, CustomLibrary, LibrariesResponse } from "@/types/gallery";
 import { apiUrl, resolveMediaUrl } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 export const DesignGallery: React.FC = () => {
   const router = useRouter();
+  const { fetchWithAuth } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"all" | "libraries">("all");
   const [items, setItems] = useState<GenerationItem[]>([]);
@@ -67,7 +69,7 @@ export const DesignGallery: React.FC = () => {
       if (onlyFavorites) params.append("is_favorite", "true");
       if (selectedLibraryId) params.append("library_id", selectedLibraryId);
 
-      const res = await fetch(apiUrl(`/api/gallery?${params.toString()}`));
+      const res = await fetchWithAuth(apiUrl(`/api/gallery?${params.toString()}`));
       if (res.ok) {
         const data: GalleryResponse = await res.json();
         setItems(
@@ -88,7 +90,7 @@ export const DesignGallery: React.FC = () => {
 
   const fetchLibraries = async () => {
     try {
-      const res = await fetch(apiUrl("/api/gallery/libraries/all"));
+      const res = await fetchWithAuth(apiUrl("/api/gallery/libraries/all"));
       if (res.ok) {
         const data: LibrariesResponse = await res.json();
         setLibraries(
@@ -120,7 +122,7 @@ export const DesignGallery: React.FC = () => {
   const handleToggleFavorite = async (item: GenerationItem, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const res = await fetch(apiUrl(`/api/gallery/${item.id}`), {
+      const res = await fetchWithAuth(apiUrl(`/api/gallery/${item.id}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_favorite: !item.is_favorite })
@@ -141,7 +143,7 @@ export const DesignGallery: React.FC = () => {
   const handleSaveRename = async () => {
     if (!renameItem || !newTitle.trim()) return;
     try {
-      const res = await fetch(apiUrl(`/api/gallery/${renameItem.id}`), {
+      const res = await fetchWithAuth(apiUrl(`/api/gallery/${renameItem.id}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: newTitle.trim() })
@@ -162,7 +164,7 @@ export const DesignGallery: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await fetch(apiUrl(`/api/gallery/${id}`), {
+      const res = await fetchWithAuth(apiUrl(`/api/gallery/${id}`), {
         method: "DELETE"
       });
       if (res.ok) {
@@ -178,7 +180,7 @@ export const DesignGallery: React.FC = () => {
   const handleCreateLibrary = async () => {
     if (!newLibName.trim()) return;
     try {
-      const res = await fetch(apiUrl("/api/gallery/libraries/create"), {
+      const res = await fetchWithAuth(apiUrl("/api/gallery/libraries/create"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newLibName.trim(), description: newLibDesc.trim() || null })
@@ -197,7 +199,7 @@ export const DesignGallery: React.FC = () => {
   const handleAddToLibrary = async (libraryId: string) => {
     if (!addToLibItem) return;
     try {
-      const res = await fetch(apiUrl(`/api/gallery/libraries/${libraryId}/items`), {
+      const res = await fetchWithAuth(apiUrl(`/api/gallery/libraries/${libraryId}/items`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ generation_id: addToLibItem.id })

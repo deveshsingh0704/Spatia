@@ -60,7 +60,7 @@ gpu_image = (
 
 @app.cls(
     image=gpu_image,
-    gpu="L4",
+    gpu="T4",
     scaledown_window=120,
     secrets=[modal.Secret.from_name("latentcraft-aws")],
 )

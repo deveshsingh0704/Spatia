@@ -133,7 +133,8 @@ function parseNegativePromptToTags(neg?: string | null): string[] {
 const ACTIVE_CHAT_STORAGE_KEY = "latentcraft_active_chat_id";
 
 export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
-  const { accessToken } = useAuth();
+  const { user, accessToken, fetchWithAuth } = useAuth();
+  const activeChatStorageKey = user ? `latentcraft_active_chat_id_${user.id}` : null;
   const [activeSubTab, setActiveSubTab] = useState<"generate" | "benchmark">("generate");
   const [isTweaksOpen, setIsTweaksOpen] = useState(true);
 
@@ -231,7 +232,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   // Fetch persisted generations for the Recent History Picker
   const fetchHistoryStrip = async () => {
     try {
-      const res = await fetch(apiUrl("/api/gallery?page=1&page_size=24&sort_by=created_at_desc"));
+      const res = await fetchWithAuth(apiUrl("/api/gallery?page=1&page_size=24&sort_by=created_at_desc"));
       if (res.ok) {
         const data = await res.json();
         const items = data.items || [];
@@ -247,10 +248,10 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   const loadChatSessionById = async (chatId: string) => {
     setIsRestoringChat(true);
     try {
-      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(chatId)}`));
+      const res = await fetchWithAuth(apiUrl(`/api/chats/${encodeURIComponent(chatId)}`));
       if (!res.ok) {
         if (res.status === 404 && typeof window !== "undefined") {
-          localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+          if (activeChatStorageKey) localStorage.removeItem(activeChatStorageKey);
           window.history.replaceState(null, "", "/studio");
         }
         return;
@@ -272,7 +273,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
           setNegativeTags(data.chat.negative_tags);
         }
         if (typeof window !== "undefined") {
-          localStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, data.chat.id);
+          if (activeChatStorageKey) localStorage.setItem(activeChatStorageKey, data.chat.id);
           window.history.replaceState(null, "", `/studio?chat=${encodeURIComponent(data.chat.id)}`);
         }
       }
@@ -319,7 +320,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       const urlGenId = sp.get("gen");
 
       if (isNew) {
-        localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+        if (activeChatStorageKey) localStorage.removeItem(activeChatStorageKey);
         window.history.replaceState(null, "", "/studio");
         return;
       }
@@ -332,7 +333,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       if (urlGenId) {
         void (async () => {
           try {
-            const res = await fetch(apiUrl(`/api/gallery/${encodeURIComponent(urlGenId)}`));
+            const res = await fetchWithAuth(apiUrl(`/api/gallery/${encodeURIComponent(urlGenId)}`));
             if (res.ok) {
               const it = await res.json();
               if (it.chat_id) {
@@ -357,7 +358,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
         return;
       }
 
-      const storedChatId = localStorage.getItem(ACTIVE_CHAT_STORAGE_KEY);
+      const storedChatId = activeChatStorageKey ? localStorage.getItem(activeChatStorageKey) : null;
       if (storedChatId) {
         void loadChatSessionById(storedChatId);
       }
@@ -455,7 +456,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       if (accessToken) {
         headers.Authorization = `Bearer ${accessToken}`;
       }
-      const res = await fetch(apiUrl(`/api/generate?job_id=${jobId}`), {
+      const res = await fetchWithAuth(apiUrl(`/api/generate?job_id=${jobId}`), {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -483,7 +484,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
           if (data.is_shared !== undefined) setIsChatShared(Boolean(data.is_shared));
           if (data.share_token !== undefined) setShareToken(data.share_token || null);
           if (typeof window !== "undefined") {
-            localStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, data.chat_id);
+            if (activeChatStorageKey) localStorage.setItem(activeChatStorageKey, data.chat_id);
             window.history.replaceState(null, "", `/studio?chat=${encodeURIComponent(data.chat_id)}`);
           }
         }
@@ -539,7 +540,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     );
     if (msg.dbId) {
       try {
-        await fetch(apiUrl(`/api/gallery/${msg.dbId}`), {
+        await fetchWithAuth(apiUrl(`/api/gallery/${msg.dbId}`), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ is_favorite: nextFav })
@@ -582,7 +583,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     setChatMessages([]);
     setShowHistoryPicker(false);
     if (typeof window !== "undefined") {
-      localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+      if (activeChatStorageKey) localStorage.removeItem(activeChatStorageKey);
       window.history.replaceState(null, "", "/studio");
     }
   };
@@ -592,7 +593,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     const nextSaved = !isChatSaved;
     setIsChatSaved(nextSaved);
     try {
-      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(activeChatId)}`), {
+      const res = await fetchWithAuth(apiUrl(`/api/chats/${encodeURIComponent(activeChatId)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -615,7 +616,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   const handleToggleShareChat = async (enable: boolean) => {
     if (!activeChatId) return;
     try {
-      const res = await fetch(apiUrl(`/api/chats/${encodeURIComponent(activeChatId)}/share`), {
+      const res = await fetchWithAuth(apiUrl(`/api/chats/${encodeURIComponent(activeChatId)}/share`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_shared: enable })
@@ -688,7 +689,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     } catch {}
 
     try {
-      const res = await fetch(apiUrl(`/api/benchmark/run-custom?job_id=${jobId}`), {
+      const res = await fetchWithAuth(apiUrl(`/api/benchmark/run-custom?job_id=${jobId}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

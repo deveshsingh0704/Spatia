@@ -5,8 +5,9 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete, desc, asc
-from models.user import get_db
+from models.user import User, get_db
 from models.gallery import Generation, Library, LibraryItem
+from api.deps import get_current_user
 from services.storage import get_storage_service, OUTPUTS_GALLERY_DIR
 
 router = APIRouter(prefix="/api/gallery", tags=["Gallery & Libraries"])
@@ -38,12 +39,13 @@ async def get_gallery_items(
     is_favorite: Optional[bool] = Query(None),
     library_id: Optional[str] = Query(None),
     sort_by: str = Query("created_at_desc", regex="^(created_at_desc|created_at_asc|steps_desc|latency_desc)$"),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Returns a paginated list of generated architectural mockups with filtering and sorting.
+    Returns a paginated list of generated architectural mockups owned by the current user.
     """
-    query = select(Generation)
+    query = select(Generation).filter(Generation.user_id == current_user.id)
 
     if library_id:
         query = query.join(LibraryItem, Generation.id == LibraryItem.generation_id).filter(LibraryItem.library_id == library_id)
@@ -126,9 +128,13 @@ async def get_gallery_items(
 
 
 @router.get("/{generation_id}")
-async def get_generation_by_id(generation_id: str, db: AsyncSession = Depends(get_db)):
-    """Fetch complete metadata for a single generation."""
-    stmt = select(Generation).filter(Generation.id == generation_id)
+async def get_generation_by_id(
+    generation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch complete metadata for a single generation owned by the current user."""
+    stmt = select(Generation).filter(Generation.id == generation_id, Generation.user_id == current_user.id)
     result = await db.execute(stmt)
     item = result.scalar_one_or_none()
     if not item:
@@ -191,10 +197,11 @@ async def download_generation(generation_id: str, db: AsyncSession = Depends(get
 async def update_generation(
     generation_id: str,
     payload: GenerationUpdateSchema,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update title or favorite status of a generation."""
-    stmt = select(Generation).filter(Generation.id == generation_id)
+    """Update title or favorite status of a generation owned by the current user."""
+    stmt = select(Generation).filter(Generation.id == generation_id, Generation.user_id == current_user.id)
     result = await db.execute(stmt)
     item = result.scalar_one_or_none()
     if not item:
@@ -211,12 +218,15 @@ async def update_generation(
 
 
 @router.delete("/{generation_id}")
-async def delete_generation(generation_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_generation(
+    generation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
-    Deletes a generation from PostgreSQL/SQLite AND permanently wipes the image file
-    from local disk or AWS S3/Cloudflare R2 storage.
+    Deletes a generation owned by the current user from DB AND storage.
     """
-    stmt = select(Generation).filter(Generation.id == generation_id)
+    stmt = select(Generation).filter(Generation.id == generation_id, Generation.user_id == current_user.id)
     result = await db.execute(stmt)
     item = result.scalar_one_or_none()
     if not item:
@@ -244,8 +254,11 @@ async def delete_generation(generation_id: str, db: AsyncSession = Depends(get_d
 # =====================================================================
 
 @router.get("/libraries/all")
-async def list_libraries(db: AsyncSession = Depends(get_db)):
-    """List all custom user libraries with their item counts."""
+async def list_libraries(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List custom user libraries owned by the current user."""
     stmt = (
         select(
             Library.id,
@@ -256,6 +269,7 @@ async def list_libraries(db: AsyncSession = Depends(get_db)):
             func.count(LibraryItem.id).label("item_count")
         )
         .outerjoin(LibraryItem, Library.id == LibraryItem.library_id)
+        .filter(Library.user_id == current_user.id)
         .group_by(Library.id)
         .order_by(desc(Library.created_at))
     )
@@ -278,9 +292,13 @@ async def list_libraries(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/libraries/create")
-async def create_library(payload: LibraryCreateSchema, db: AsyncSession = Depends(get_db)):
-    """Create a new custom library/collection."""
-    new_lib = Library(name=payload.name.strip(), description=payload.description)
+async def create_library(
+    payload: LibraryCreateSchema,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new custom library/collection owned by the current user."""
+    new_lib = Library(user_id=current_user.id, name=payload.name.strip(), description=payload.description)
     db.add(new_lib)
     await db.commit()
     await db.refresh(new_lib)
@@ -296,9 +314,13 @@ async def create_library(payload: LibraryCreateSchema, db: AsyncSession = Depend
 
 
 @router.delete("/libraries/{library_id}")
-async def delete_library(library_id: str, db: AsyncSession = Depends(get_db)):
-    """Delete a library collection (generations remain intact)."""
-    stmt = select(Library).filter(Library.id == library_id)
+async def delete_library(
+    library_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a library collection owned by the current user (generations remain intact)."""
+    stmt = select(Library).filter(Library.id == library_id, Library.user_id == current_user.id)
     result = await db.execute(stmt)
     lib = result.scalar_one_or_none()
     if not lib:
@@ -313,16 +335,15 @@ async def delete_library(library_id: str, db: AsyncSession = Depends(get_db)):
 async def add_item_to_library(
     library_id: str,
     payload: LibraryItemAddSchema,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Add a generation to a specific library."""
-    # Check library exists
-    lib = (await db.execute(select(Library).filter(Library.id == library_id))).scalar_one_or_none()
+    """Add a generation owned by the current user to their library."""
+    lib = (await db.execute(select(Library).filter(Library.id == library_id, Library.user_id == current_user.id))).scalar_one_or_none()
     if not lib:
         raise HTTPException(status_code=404, detail="Library not found")
 
-    # Check generation exists
-    gen = (await db.execute(select(Generation).filter(Generation.id == payload.generation_id))).scalar_one_or_none()
+    gen = (await db.execute(select(Generation).filter(Generation.id == payload.generation_id, Generation.user_id == current_user.id))).scalar_one_or_none()
     if not gen:
         raise HTTPException(status_code=404, detail="Generation not found")
 
@@ -350,9 +371,13 @@ async def add_item_to_library(
 async def remove_item_from_library(
     library_id: str,
     generation_id: str,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Remove a generation from a specific library."""
+    """Remove a generation from a specific library owned by the current user."""
+    lib = (await db.execute(select(Library).filter(Library.id == library_id, Library.user_id == current_user.id))).scalar_one_or_none()
+    if not lib:
+        raise HTTPException(status_code=404, detail="Library not found")
     stmt = delete(LibraryItem).filter(
         LibraryItem.library_id == library_id,
         LibraryItem.generation_id == generation_id

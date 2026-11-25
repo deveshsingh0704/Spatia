@@ -1,5 +1,6 @@
 export interface GenerationItem {
   id: string;
+  chat_id?: string | null;
   title: string;
   image_url: string;
   storage_key: string;
@@ -45,5 +46,29 @@ export interface CustomLibrary {
 
 export interface LibrariesResponse {
   libraries: CustomLibrary[];
+}
+
+export interface ChatSessionItem {
+  id: string;
+  title: string;
+  model_name: string;
+  sampler_name: string;
+  steps: number;
+  guidance_scale: number;
+  seed: number;
+  resolution: string;
+  negative_tags: string[];
+  preview_image_url?: string | null;
+  is_saved: boolean;
+  is_shared: boolean;
+  share_token?: string | null;
+  message_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ChatDetailResponse {
+  chat: ChatSessionItem;
+  messages: GenerationItem[];
 }
 

@@ -219,13 +219,11 @@ export const DesignGallery: React.FC = () => {
 
   const handleSendToStudio = (item: GenerationItem, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    router.push(
-      `/studio?prompt=${encodeURIComponent(item.prompt)}&model=${encodeURIComponent(
-        item.model_name
-      )}&sampler=${encodeURIComponent(item.sampler_name)}&steps=${item.steps}&guidance=${
-        item.guidance_scale
-      }&seed=${item.seed}&resolution=${encodeURIComponent(item.resolution || "512x512")}`
-    );
+    if (item.chat_id) {
+      router.push(`/studio?chat=${encodeURIComponent(item.chat_id)}`);
+    } else {
+      router.push(`/studio?gen=${encodeURIComponent(item.id)}`);
+    }
   };
 
   return (

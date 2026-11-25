@@ -24,9 +24,14 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Tag,
-  History
+  History,
+  Bookmark,
+  Share2,
+  MessageSquarePlus,
+  ExternalLink
 } from "lucide-react";
 import { GlassSelect } from "@/components/ui/GlassSelect";
+import { useAuth } from "@/context/AuthContext";
 import { SystemInfo } from "@/types/benchmark";
 import {
   ResponsiveContainer,
@@ -124,9 +129,22 @@ function parseNegativePromptToTags(neg?: string | null): string[] {
   );
 }
 
+const ACTIVE_CHAT_STORAGE_KEY = "latentcraft_active_chat_id";
+
 export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
+  const { accessToken } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<"generate" | "benchmark">("generate");
   const [isTweaksOpen, setIsTweaksOpen] = useState(true);
+
+  // Persistent Chat Session State
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [activeChatTitle, setActiveChatTitle] = useState<string>("New Studio Chat");
+  const [isChatSaved, setIsChatSaved] = useState(false);
+  const [isChatShared, setIsChatShared] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(null);
+  const [isRestoringChat, setIsRestoringChat] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   // Left-side Custom Tweak Controls
   const [model, setModel] = useState("Stable Diffusion v1.5 (Fine-Tuned)");
@@ -172,7 +190,44 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     { steps: 50, ddim_latency: 2.84, ddpm_latency: 9.4, ddim_fid: 4.82, ddpm_fid: 9.4 }
   ]);
 
-  // Fetch persisted generations for the Right Image History Strip (chat stays empty until clicked or generated)
+  const mapBackendGenerationToMessage = (it: {
+    id: string;
+    title?: string;
+    prompt: string;
+    negative_prompt?: string | null;
+    model_name?: string;
+    sampler_name?: string;
+    steps?: number;
+    guidance_scale?: number;
+    seed?: number;
+    resolution?: string;
+    image_url?: string;
+    latency_sec?: number;
+    peak_vram_mb?: number;
+    is_favorite?: boolean;
+    created_at?: string;
+  }): ChatGenerationMessage => ({
+    localId: `db_${it.id}`,
+    dbId: it.id,
+    title: it.title,
+    prompt: it.prompt,
+    negativeTags: parseNegativePromptToTags(it.negative_prompt),
+    modelName: it.model_name || "Stable Diffusion v1.5 (Fine-Tuned)",
+    samplerName: it.sampler_name || "DDIM",
+    steps: it.steps || 20,
+    guidanceScale: it.guidance_scale || 7.5,
+    seed: it.seed ?? 42,
+    resolution: it.resolution || "512x512",
+    imageUrl: it.image_url ? it.image_url.replace(":8000/", ":8001/") : undefined,
+    latencySec: it.latency_sec,
+    peakVramMb: it.peak_vram_mb,
+    isFavorite: Boolean(it.is_favorite),
+    savedToDb: true,
+    createdAt: it.created_at,
+    status: "completed"
+  });
+
+  // Fetch persisted generations for the Recent History Picker
   const fetchHistoryStrip = async () => {
     try {
       const res = await fetch("http://localhost:8001/api/gallery?page=1&page_size=24&sort_by=created_at_desc");
@@ -180,47 +235,55 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
         const data = await res.json();
         const items = data.items || [];
         if (Array.isArray(items)) {
-          const mapped: ChatGenerationMessage[] = items.map((it: {
-            id: string;
-            title?: string;
-            prompt: string;
-            negative_prompt?: string | null;
-            model_name?: string;
-            sampler_name?: string;
-            steps?: number;
-            guidance_scale?: number;
-            seed?: number;
-            resolution?: string;
-            image_url?: string;
-            latency_sec?: number;
-            peak_vram_mb?: number;
-            is_favorite?: boolean;
-            created_at?: string;
-          }) => ({
-            localId: `db_${it.id}`,
-            dbId: it.id,
-            title: it.title,
-            prompt: it.prompt,
-            negativeTags: parseNegativePromptToTags(it.negative_prompt),
-            modelName: it.model_name || "Stable Diffusion v1.5",
-            samplerName: it.sampler_name || "DDIM",
-            steps: it.steps || 20,
-            guidanceScale: it.guidance_scale || 7.5,
-            seed: it.seed ?? 42,
-            resolution: it.resolution || "512x512",
-            imageUrl: it.image_url ? it.image_url.replace(":8000/", ":8001/") : undefined,
-            latencySec: it.latency_sec,
-            peakVramMb: it.peak_vram_mb,
-            isFavorite: Boolean(it.is_favorite),
-            savedToDb: true,
-            createdAt: it.created_at,
-            status: "completed"
-          }));
-          setHistoryItems(mapped);
+          setHistoryItems(items.map(mapBackendGenerationToMessage));
         }
       }
     } catch (e) {
       console.warn("Could not load generation history strip:", e);
+    }
+  };
+
+  const loadChatSessionById = async (chatId: string) => {
+    setIsRestoringChat(true);
+    try {
+      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(chatId)}`);
+      if (!res.ok) {
+        if (res.status === 404 && typeof window !== "undefined") {
+          localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+          window.history.replaceState(null, "", "/studio");
+        }
+        return;
+      }
+      const data = await res.json();
+      if (data.chat) {
+        setActiveChatId(data.chat.id);
+        setActiveChatTitle(data.chat.title || "Untitled Studio Project");
+        setIsChatSaved(Boolean(data.chat.is_saved));
+        setIsChatShared(Boolean(data.chat.is_shared));
+        setShareToken(data.chat.share_token || null);
+        if (data.chat.model_name) setModel(data.chat.model_name);
+        if (data.chat.sampler_name) setSampler(data.chat.sampler_name);
+        if (data.chat.steps) setSteps(data.chat.steps);
+        if (data.chat.guidance_scale) setGuidance(data.chat.guidance_scale);
+        if (data.chat.seed !== undefined && data.chat.seed !== null) setSeed(data.chat.seed);
+        if (data.chat.resolution) setResolution(data.chat.resolution);
+        if (Array.isArray(data.chat.negative_tags) && data.chat.negative_tags.length > 0) {
+          setNegativeTags(data.chat.negative_tags);
+        }
+        if (typeof window !== "undefined") {
+          localStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, data.chat.id);
+          window.history.replaceState(null, "", `/studio?chat=${encodeURIComponent(data.chat.id)}`);
+        }
+      }
+      const msgs = Array.isArray(data.messages) ? data.messages.map(mapBackendGenerationToMessage) : [];
+      setChatMessages(msgs);
+      if (msgs.length > 0) {
+        setPromptInput(msgs[msgs.length - 1].prompt);
+      }
+    } catch (e) {
+      console.warn("Could not restore chat session:", e);
+    } finally {
+      setIsRestoringChat(false);
     }
   };
 
@@ -229,6 +292,7 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       void fetchHistoryStrip();
     });
     return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleOpenHistoryInChat = (item: ChatGenerationMessage) => {
@@ -244,21 +308,61 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     });
   };
 
-  // Load URL parameters if redirected from Gallery ("Load into Studio")
+  // Restore active chat session across tab switches/reloads, or load ?chat=<id> / ?gen=<id>
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const id = requestAnimationFrame(() => {
-        const sp = new URLSearchParams(window.location.search);
-        if (sp.get("prompt")) setPromptInput(sp.get("prompt")!);
-        if (sp.get("model")) setModel(sp.get("model")!);
-        if (sp.get("sampler")) setSampler(sp.get("sampler")!);
-        if (sp.get("steps")) setSteps(Number(sp.get("steps")));
-        if (sp.get("guidance")) setGuidance(Number(sp.get("guidance")));
-        if (sp.get("seed")) setSeed(Number(sp.get("seed")));
-        if (sp.get("resolution")) setResolution(sp.get("resolution")!);
-      });
-      return () => cancelAnimationFrame(id);
-    }
+    if (typeof window === "undefined") return;
+    const rafId = requestAnimationFrame(() => {
+      const sp = new URLSearchParams(window.location.search);
+      const isNew = sp.get("new") === "1";
+      const urlChatId = sp.get("chat");
+      const urlGenId = sp.get("gen");
+
+      if (isNew) {
+        localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+        window.history.replaceState(null, "", "/studio");
+        return;
+      }
+
+      if (urlChatId) {
+        void loadChatSessionById(urlChatId);
+        return;
+      }
+
+      if (urlGenId) {
+        void (async () => {
+          try {
+            const res = await fetch(`http://localhost:8001/api/gallery/${encodeURIComponent(urlGenId)}`);
+            if (res.ok) {
+              const it = await res.json();
+              if (it.chat_id) {
+                await loadChatSessionById(it.chat_id);
+                return;
+              }
+              const msg = mapBackendGenerationToMessage(it);
+              setPromptInput(msg.prompt);
+              setModel(msg.modelName);
+              setSampler(msg.samplerName);
+              setSteps(msg.steps);
+              setGuidance(msg.guidanceScale);
+              setSeed(msg.seed);
+              setResolution(msg.resolution);
+              if (msg.negativeTags.length > 0) setNegativeTags(msg.negativeTags);
+              setChatMessages([msg]);
+            }
+          } catch (e) {
+            console.warn("Could not load generation into Studio:", e);
+          }
+        })();
+        return;
+      }
+
+      const storedChatId = localStorage.getItem(ACTIVE_CHAT_STORAGE_KEY);
+      if (storedChatId) {
+        void loadChatSessionById(storedChatId);
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-scroll to bottom when messages update
@@ -346,9 +450,13 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
     } catch {}
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
       const res = await fetch(`http://localhost:8001/api/generate?job_id=${jobId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           prompt: activePrompt,
           negative_prompt: negPromptStr,
@@ -357,7 +465,8 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
           steps,
           guidance_scale: guidance,
           seed: activeSeed,
-          resolution
+          resolution,
+          chat_id: activeChatId
         })
       });
 
@@ -366,6 +475,17 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
       if (res.ok) {
         const data = await res.json();
         const fixedUrl = data.image_url ? data.image_url.replace(":8000/", ":8001/") : undefined;
+        if (data.chat_id) {
+          setActiveChatId(data.chat_id);
+          if (data.chat_title) setActiveChatTitle(data.chat_title);
+          if (data.is_saved !== undefined) setIsChatSaved(Boolean(data.is_saved));
+          if (data.is_shared !== undefined) setIsChatShared(Boolean(data.is_shared));
+          if (data.share_token !== undefined) setShareToken(data.share_token || null);
+          if (typeof window !== "undefined") {
+            localStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, data.chat_id);
+            window.history.replaceState(null, "", `/studio?chat=${encodeURIComponent(data.chat_id)}`);
+          }
+        }
         setChatMessages((prev) =>
           prev.map((m) =>
             m.localId === localId
@@ -441,14 +561,76 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
   };
 
   const handleDownload = (msg: ChatGenerationMessage) => {
-    if (!msg.imageUrl) return;
+    if (!msg.imageUrl && !msg.dbId) return;
     const a = document.createElement("a");
-    a.href = msg.imageUrl;
+    a.href = msg.dbId
+      ? `http://localhost:8001/api/gallery/${msg.dbId}/download`
+      : (msg.imageUrl as string);
     a.download = `latentcraft_seed${msg.seed}_${msg.resolution}_${msg.dbId || msg.localId}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   };
+
+  const handleNewChat = () => {
+    setActiveChatId(null);
+    setActiveChatTitle("New Studio Chat");
+    setIsChatSaved(false);
+    setIsChatShared(false);
+    setShareToken(null);
+    setChatMessages([]);
+    setShowHistoryPicker(false);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+      window.history.replaceState(null, "", "/studio");
+    }
+  };
+
+  const handleToggleSaveChat = async () => {
+    if (!activeChatId) return;
+    const nextSaved = !isChatSaved;
+    setIsChatSaved(nextSaved);
+    try {
+      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(activeChatId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          is_saved: nextSaved,
+          model_name: model,
+          sampler_name: sampler,
+          steps,
+          guidance_scale: guidance,
+          seed,
+          resolution,
+          negative_tags: negativeTags
+        })
+      });
+      if (!res.ok) setIsChatSaved(!nextSaved);
+    } catch {
+      setIsChatSaved(!nextSaved);
+    }
+  };
+
+  const handleToggleShareChat = async (enable: boolean) => {
+    if (!activeChatId) return;
+    try {
+      const res = await fetch(`http://localhost:8001/api/chats/${encodeURIComponent(activeChatId)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_shared: enable })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIsChatShared(Boolean(data.is_shared));
+        setShareToken(data.share_token || null);
+      }
+    } catch {}
+  };
+
+  const shareUrl =
+    typeof window !== "undefined" && shareToken
+      ? `${window.location.origin}/share/${shareToken}`
+      : "";
 
   const handleCopyPrompt = (msg: ChatGenerationMessage) => {
     navigator.clipboard?.writeText(msg.prompt);
@@ -584,18 +766,69 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
           </div>
         </div>
 
-        {activeSubTab === "generate" && chatMessages.length > 0 && (
-          <button
-            onClick={() => {
-              setChatMessages([]);
-              setShowHistoryPicker(false);
-            }}
-            title="Clear Chat View"
-            className="px-3 py-1.5 rounded-full liquid-glass text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Clear View</span>
-          </button>
+        {activeSubTab === "generate" && (
+          <div className="flex items-center gap-2 min-w-0">
+            {activeChatId && (
+              <>
+                <span
+                  title={activeChatTitle}
+                  className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full liquid-glass text-xs font-medium text-[var(--foreground)] max-w-[240px] truncate"
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    style={{ background: "var(--brand-secondary)" }}
+                  />
+                  <span className="truncate">{activeChatTitle}</span>
+                </span>
+
+                <button
+                  onClick={handleToggleSaveChat}
+                  title={isChatSaved ? "Saved Project (Click to Unsave)" : "Save Project"}
+                  style={
+                    isChatSaved
+                      ? { background: "var(--brand-secondary-soft)", color: "var(--brand-secondary)" }
+                      : undefined
+                  }
+                  className={`px-3 py-1.5 rounded-full liquid-glass text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    isChatSaved
+                      ? "font-semibold"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  }`}
+                >
+                  <Bookmark className={`w-3.5 h-3.5 ${isChatSaved ? "fill-current" : ""}`} />
+                  <span className="hidden sm:inline">{isChatSaved ? "Saved" : "Save"}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (!isChatShared) void handleToggleShareChat(true);
+                    setShareModalOpen(true);
+                  }}
+                  title="Share Chat Session"
+                  style={
+                    isChatShared
+                      ? { background: "var(--brand-tertiary-soft)", color: "var(--brand-tertiary)" }
+                      : undefined
+                  }
+                  className="px-3 py-1.5 rounded-full liquid-glass text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{isChatShared ? "Shared" : "Share"}</span>
+                </button>
+              </>
+            )}
+
+            {(chatMessages.length > 0 || activeChatId) && (
+              <button
+                onClick={handleNewChat}
+                title="Start New Chat Session"
+                className="px-3 py-1.5 rounded-full liquid-glass text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-overlay)] flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <MessageSquarePlus className="w-3.5 h-3.5" style={{ color: "var(--brand-accent)" }} />
+                <span className="hidden sm:inline">New Chat</span>
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -891,7 +1124,13 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
           <div className="flex-1 flex flex-col min-w-0 min-h-0 saas-card overflow-hidden relative">
             {/* Scrollable Chat Thread */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-28 space-y-6">
-              {chatMessages.length === 0 && (
+              {isRestoringChat && chatMessages.length === 0 && (
+                <div className="min-h-full flex items-center justify-center text-xs text-[var(--muted-foreground)] gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" style={{ color: "var(--brand-accent)" }} />
+                  <span>Restoring your Studio session...</span>
+                </div>
+              )}
+              {!isRestoringChat && chatMessages.length === 0 && (
                 <div className="min-h-full flex flex-col items-center justify-center text-center max-w-3xl mx-auto space-y-6 py-8">
                   <div
                     className="w-14 h-14 rounded-2xl flex items-center justify-center"
@@ -1312,6 +1551,93 @@ export const StudioGenerator: React.FC<StudioGeneratorProps> = () => {
                   className="object-contain"
                   unoptimized
                 />
+              </div>
+            </div>
+          )}
+
+          {/* Share Session Modal */}
+          {shareModalOpen && activeChatId && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-2xl liquid-glass-elevated p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-8 h-8 rounded-xl flex items-center justify-center"
+                      style={{ background: "var(--brand-accent-soft)", color: "var(--brand-accent)" }}
+                    >
+                      <Share2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-[var(--foreground)]">Share Project Session</h3>
+                      <p className="text-xs text-[var(--muted-foreground)] truncate max-w-[240px]">
+                        {activeChatTitle}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShareModalOpen(false)}
+                    className="p-1.5 rounded-lg text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-overlay)]"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {isChatShared && shareUrl ? (
+                  <div className="space-y-3">
+                    <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
+                      Anyone with this link can view the full prompt conversation, parameters, and generated AWS S3 images.
+                    </p>
+                    <div className="flex items-center gap-2 p-2 rounded-xl bg-[var(--surface-overlay)]">
+                      <input
+                        type="text"
+                        readOnly
+                        value={shareUrl}
+                        className="flex-1 bg-transparent text-xs font-mono text-[var(--foreground)] outline-none"
+                      />
+                      <button
+                        onClick={() => {
+                          navigator.clipboard?.writeText(shareUrl);
+                          setShareCopied(true);
+                          setTimeout(() => setShareCopied(false), 1800);
+                        }}
+                        className="px-3 py-1.5 saas-btn-primary text-xs flex items-center gap-1.5"
+                      >
+                        {shareCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{shareCopied ? "Copied" : "Copy"}</span>
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                      <a
+                        href={shareUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-medium flex items-center gap-1 hover:underline"
+                        style={{ color: "var(--brand-accent)" }}
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Open Shared View</span>
+                      </a>
+                      <button
+                        onClick={() => void handleToggleShareChat(false)}
+                        className="px-3 py-1.5 rounded-xl bg-rose-500/15 text-rose-400 text-xs font-medium hover:bg-rose-500/25 transition-colors cursor-pointer"
+                      >
+                        Disable Sharing
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-[var(--muted-foreground)]">
+                      Sharing is currently disabled for this session.
+                    </p>
+                    <button
+                      onClick={() => void handleToggleShareChat(true)}
+                      className="w-full py-2.5 saas-btn-primary text-xs font-semibold cursor-pointer"
+                    >
+                      Enable Public Share Link
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}

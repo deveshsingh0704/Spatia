@@ -17,7 +17,8 @@ import {
   Type,
   Palette,
   Check,
-  X
+  X,
+  History
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -87,6 +88,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ activeTab }) => {
 
   const navItems = [
     { id: "studio", label: "Studio", path: "/studio", icon: Wand2, badge: "Chat" },
+    { id: "chats", label: "Chat History", path: "/chats", icon: History, badge: null },
     { id: "benchmark", label: "Benchmark Lab", path: "/benchmark", icon: BarChart2, badge: null },
     { id: "gallery", label: "Gallery", path: "/gallery", icon: ImageIcon, badge: null },
     { id: "api", label: "API Reference", path: "/api", icon: Code2, badge: null }
@@ -94,7 +96,9 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({ activeTab }) => {
 
   const currentTab =
     activeTab ||
-    (pathname.includes("benchmark")
+    (pathname.includes("chats")
+      ? "chats"
+      : pathname.includes("benchmark")
       ? "benchmark"
       : pathname.includes("gallery")
       ? "gallery"

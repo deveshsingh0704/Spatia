@@ -1,12 +1,13 @@
 import math
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete, desc, asc
 from models.user import get_db
 from models.gallery import Generation, Library, LibraryItem
-from services.storage import get_storage_service
+from services.storage import get_storage_service, OUTPUTS_GALLERY_DIR
 
 router = APIRouter(prefix="/api/gallery", tags=["Gallery & Libraries"])
 
@@ -84,12 +85,15 @@ async def get_gallery_items(
 
     total_pages = math.ceil(total_records / page_size) if total_records > 0 else 1
 
+    storage = get_storage_service()
     formatted_items = []
     for item in items:
+        resolved_url = storage.resolve_url(item.image_url, item.storage_key)
         formatted_items.append({
             "id": item.id,
+            "chat_id": item.chat_id,
             "title": item.title,
-            "image_url": item.image_url,
+            "image_url": resolved_url,
             "storage_key": item.storage_key,
             "prompt": item.prompt,
             "negative_prompt": item.negative_prompt,
@@ -130,10 +134,14 @@ async def get_generation_by_id(generation_id: str, db: AsyncSession = Depends(ge
     if not item:
         raise HTTPException(status_code=404, detail="Generation not found")
 
+    storage = get_storage_service()
+    resolved_url = storage.resolve_url(item.image_url, item.storage_key)
+
     return {
         "id": item.id,
+        "chat_id": item.chat_id,
         "title": item.title,
-        "image_url": item.image_url,
+        "image_url": resolved_url,
         "storage_key": item.storage_key,
         "prompt": item.prompt,
         "negative_prompt": item.negative_prompt,
@@ -150,6 +158,33 @@ async def get_generation_by_id(generation_id: str, db: AsyncSession = Depends(ge
         "is_favorite": item.is_favorite,
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
+
+
+@router.get("/{generation_id}/download")
+async def download_generation(generation_id: str, db: AsyncSession = Depends(get_db)):
+    """Download a generated image with forced attachment filename (supports S3 presigned & local files)."""
+    stmt = select(Generation).filter(Generation.id == generation_id)
+    result = await db.execute(stmt)
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    filename = f"latentcraft_seed{item.seed}_{item.resolution}_{item.id[:8]}.png"
+    storage = get_storage_service()
+    resolved_url = storage.resolve_url(
+        item.image_url,
+        item.storage_key,
+        expires_in=300,
+        download_filename=filename,
+    )
+    if resolved_url and resolved_url.startswith("http://localhost:8001/outputs/gallery/"):
+        local_file = OUTPUTS_GALLERY_DIR / item.storage_key
+        if local_file.exists():
+            return FileResponse(path=local_file, filename=filename, media_type="image/png")
+
+    if not resolved_url:
+        raise HTTPException(status_code=404, detail="Image URL unavailable")
+    return RedirectResponse(url=resolved_url)
 
 
 @router.patch("/{generation_id}")
@@ -227,13 +262,14 @@ async def list_libraries(db: AsyncSession = Depends(get_db)):
     result = await db.execute(stmt)
     rows = result.all()
 
+    storage = get_storage_service()
     libraries = []
     for r in rows:
         libraries.append({
             "id": r[0],
             "name": r[1],
             "description": r[2],
-            "cover_image_url": r[3],
+            "cover_image_url": storage.resolve_url(r[3]),
             "created_at": r[4].isoformat() if r[4] else None,
             "item_count": r[5]
         })

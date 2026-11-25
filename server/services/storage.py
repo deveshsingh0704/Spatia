@@ -2,21 +2,39 @@ import os
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
+import json
 import boto3
 from botocore.exceptions import ClientError
 from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
 SERVER_ROOT = Path(__file__).resolve().parent.parent
 OUTPUTS_GALLERY_DIR = SERVER_ROOT / "outputs" / "gallery"
 OUTPUTS_GALLERY_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _build_png_info(metadata: Optional[Dict[str, Any]]) -> Optional[PngInfo]:
+    if not metadata:
+        return None
+    pnginfo = PngInfo()
+    for key, val in metadata.items():
+        if val is not None:
+            pnginfo.add_text(str(key), str(val))
+    pnginfo.add_text("latentcraft_metadata", json.dumps(metadata))
+    return pnginfo
+
+
 class BaseStorageService(ABC):
     @abstractmethod
-    def save_image(self, image: Image.Image, filename_prefix: str = "gen") -> Tuple[str, str]:
+    def save_image(
+        self,
+        image: Image.Image,
+        filename_prefix: str = "gen",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
         """
-        Saves a PIL Image.
+        Saves a PIL Image (with optional embedded PNG metadata).
         Returns:
             Tuple[image_url, storage_key]
         """
@@ -35,10 +53,19 @@ class LocalStorageService(BaseStorageService):
         self.base_url = base_url.rstrip("/")
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_image(self, image: Image.Image, filename_prefix: str = "gen") -> Tuple[str, str]:
+    def save_image(
+        self,
+        image: Image.Image,
+        filename_prefix: str = "gen",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
         unique_name = f"{filename_prefix}_{uuid.uuid4().hex[:12]}.png"
         filepath = self.base_dir / unique_name
-        image.save(filepath, format="PNG", optimize=True)
+        pnginfo = _build_png_info(metadata)
+        save_kwargs = {"format": "PNG", "optimize": True}
+        if pnginfo is not None:
+            save_kwargs["pnginfo"] = pnginfo
+        image.save(filepath, **save_kwargs)
         image_url = f"{self.base_url}/{unique_name}"
         return image_url, unique_name
 
@@ -76,10 +103,19 @@ class S3CloudStorageService(BaseStorageService):
             endpoint_url=endpoint_url
         )
 
-    def save_image(self, image: Image.Image, filename_prefix: str = "gen") -> Tuple[str, str]:
+    def save_image(
+        self,
+        image: Image.Image,
+        filename_prefix: str = "gen",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
         import io
         buffer = io.BytesIO()
-        image.save(buffer, format="PNG", optimize=True)
+        pnginfo = _build_png_info(metadata)
+        save_kwargs = {"format": "PNG", "optimize": True}
+        if pnginfo is not None:
+            save_kwargs["pnginfo"] = pnginfo
+        image.save(buffer, **save_kwargs)
         buffer.seek(0)
         
         storage_key = f"gallery/{filename_prefix}_{uuid.uuid4().hex[:12]}.png"

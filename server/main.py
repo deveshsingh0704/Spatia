@@ -667,10 +667,11 @@ async def stream_generation_progress(job_id: str):
 
 
 @app.post("/api/generate")
-def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(None)):
+async def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(None)):
     """
     Executes actual diffusion sampling using the imported GeneratorService.
     Supports real-time callback hooks to feed ACTIVE_GENERATION_JOBS for live SSE streaming.
+    Persists complete generation metadata to both PostgreSQL/SQLite and embedded PNG metadata chunks.
     """
     if not job_id:
         job_id = f"job_{int(time.time() * 1000)}"
@@ -716,7 +717,8 @@ def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(None)):
 
     try:
         generator = get_generator()
-        img, metadata = generator.generate(
+        img, metadata = await asyncio.to_thread(
+            generator.generate,
             prompt=req.prompt,
             negative_prompt=req.negative_prompt,
             model_name=req.model_name,
@@ -736,11 +738,25 @@ def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(None)):
             from models.gallery import Generation
             from models.user import AsyncSessionLocal
 
-            storage = get_storage_service()
-            image_url, storage_key = storage.save_image(img, filename_prefix="mockup")
-
             hw = get_live_hardware_telemetry()
-            vram_mb = hw["vram_used_gb"] * 1024
+            vram_mb = round(hw["vram_used_gb"] * 1024, 1)
+
+            embed_meta = {
+                "prompt": req.prompt,
+                "negative_prompt": req.negative_prompt or "",
+                "model_name": req.model_name,
+                "sampler_name": req.sampler_name,
+                "steps": req.steps,
+                "guidance_scale": req.guidance_scale,
+                "seed": req.seed,
+                "resolution": f"{resolution[0]}x{resolution[1]}",
+                "latency_sec": elapsed_total,
+                "peak_vram_mb": vram_mb,
+                "device": hw["device_name"],
+            }
+
+            storage = get_storage_service()
+            image_url, storage_key = storage.save_image(img, filename_prefix="mockup", metadata=embed_meta)
 
             # Clean, intelligent prompt-derived title
             clean_title = req.prompt.strip().rstrip(".,;")
@@ -768,51 +784,61 @@ def generate_image(req: GenerateRequest, job_id: Optional[str] = Query(None)):
             candidate_title = " ".join(words).title()
             final_title = candidate_title if len(candidate_title) > 3 else f"Architectural Mockup #{req.seed}"
 
-            # Automatically persist generation metadata to PostgreSQL / SQLite
+            # Automatically persist generation metadata to PostgreSQL / SQLite on main event loop
+            saved_id = None
+            saved_at = None
+            saved_to_db = False
             try:
-                import asyncio
-                from models.gallery import Generation
-                from models.user import AsyncSessionLocal
-
-                async def persist_record():
-                    async with AsyncSessionLocal() as session:
-                        gen_record = Generation(
-                            title=final_title,
-                            image_url=image_url,
-                            storage_key=storage_key,
-                            prompt=req.prompt,
-                            negative_prompt=req.negative_prompt,
-                            seed=req.seed,
-                            model_name=req.model_name,
-                            sampler_name=req.sampler_name,
-                            steps=req.steps,
-                            guidance_scale=req.guidance_scale,
-                            resolution=req.resolution,
-                            width=resolution[0],
-                            height=resolution[1],
-                            latency_sec=elapsed_total,
-                            peak_vram_mb=vram_mb
-                        )
-                        session.add(gen_record)
-                        await session.commit()
-                        print(f"[Gallery Database] Successfully saved new mockup '{final_title}' ({storage_key}) to PostgreSQL!")
-
-                # In Starlette def endpoints (run in threadpool), asyncio.run guarantees completion
-                asyncio.run(persist_record())
+                async with AsyncSessionLocal() as session:
+                    gen_record = Generation(
+                        title=final_title,
+                        image_url=image_url,
+                        storage_key=storage_key,
+                        prompt=req.prompt,
+                        negative_prompt=req.negative_prompt,
+                        seed=req.seed,
+                        model_name=req.model_name,
+                        sampler_name=req.sampler_name,
+                        steps=req.steps,
+                        guidance_scale=req.guidance_scale,
+                        resolution=f"{resolution[0]}x{resolution[1]}",
+                        width=resolution[0],
+                        height=resolution[1],
+                        latency_sec=elapsed_total,
+                        peak_vram_mb=vram_mb
+                    )
+                    session.add(gen_record)
+                    await session.commit()
+                    await session.refresh(gen_record)
+                    saved_id = gen_record.id
+                    saved_at = gen_record.created_at.isoformat() if gen_record.created_at else None
+                    saved_to_db = True
+                    print(f"[Gallery Database] Successfully saved new mockup '{final_title}' (id={saved_id}, {storage_key}) to DB!")
             except Exception as db_err:
                 print(f"[Database Auto-Save Error]: {db_err}")
 
             res_payload = {
                 "status": "completed",
+                "id": saved_id,
+                "title": final_title,
                 "image_url": image_url,
+                "storage_key": storage_key,
+                "prompt": req.prompt,
+                "negative_prompt": req.negative_prompt,
                 "seed": req.seed,
                 "steps": req.steps,
+                "guidance_scale": req.guidance_scale,
+                "resolution": f"{resolution[0]}x{resolution[1]}",
+                "width": resolution[0],
+                "height": resolution[1],
                 "sampler": req.sampler_name,
                 "model": req.model_name,
                 "metadata": metadata,
                 "latency_sec": elapsed_total,
                 "peak_vram_mb": vram_mb,
-                "device": hw["device_name"]
+                "device": hw["device_name"],
+                "saved_to_db": saved_to_db,
+                "created_at": saved_at,
             }
 
             # Update job for final SSE event
